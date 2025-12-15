@@ -38,11 +38,11 @@
           "gemini_model": "Modellnamn",
           "calendar_entity_1": "Kalender 1 (Valfri)",
           "calendar_entity_2": "Kalender 2 (Valfri)",
-          "email_service": "E-posttjänst (t.ex. notify.skicka_epost)",
+          "email_service": "Välj E-posttjänst (notify)",
           "email_recipient_1": "E-postmottagare 1",
           "email_recipient_2": "E-postmottagare 2",
-          "notify_service_1": "Mobiltjänst 1 (t.ex. notify.mobile_app_iphone)",
-          "notify_service_2": "Mobiltjänst 2"
+          "notify_service_1": "Välj Mobiltjänst 1 (notify)",
+          "notify_service_2": "Välj Mobiltjänst 2 (notify)"
         }
       }
     }

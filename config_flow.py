@@ -1,4 +1,4 @@
-# Version: 0.11.0 - 2025-12-15
+# Version: 0.11.2 - 2025-12-15
 """Config flow för Mail Agent integration."""
 
 import imaplib
@@ -14,7 +14,9 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.selector import (
     EntitySelector,
     EntitySelectorConfig,
-    TextSelector,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
 )
 
 from .const import (
@@ -132,6 +134,25 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
         config = self.config_entry.data
         options = self.config_entry.options
 
+        # Hämta alla tillgängliga notify-tjänster
+        notify_services = []
+        services = self.hass.services.async_services()
+        if "notify" in services:
+            for service in services["notify"]:
+                notify_services.append(f"notify.{service}")
+
+        # Sortera listan för snyggare UI
+        notify_services.sort()
+
+        # Skapa en selector som tillåter att man väljer från listan ELLER skriver eget
+        notify_selector = SelectSelector(
+            SelectSelectorConfig(
+                options=notify_services,
+                mode=SelectSelectorMode.DROPDOWN,
+                custom_value=True # Tillåter att man skriver in något som inte finns i listan (t.ex. om tjänsten är nere just nu)
+            )
+        )
+
         calendar_selector = EntitySelector(
             EntitySelectorConfig(domain="calendar", multiple=False)
         )
@@ -152,14 +173,14 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
             vol.Optional(CONF_CALENDAR_1, description={"suggested_value": options.get(CONF_CALENDAR_1)}): calendar_selector,
             vol.Optional(CONF_CALENDAR_2, description={"suggested_value": options.get(CONF_CALENDAR_2)}): calendar_selector,
 
-            # E-post Notifiering
-            vol.Optional(CONF_EMAIL_SERVICE, description={"suggested_value": options.get(CONF_EMAIL_SERVICE, "notify.skicka_epost")}): str,
+            # E-post Notifiering (Nu med Dropdown)
+            vol.Optional(CONF_EMAIL_SERVICE, description={"suggested_value": options.get(CONF_EMAIL_SERVICE)}): notify_selector,
             vol.Optional(CONF_EMAIL_RECIPIENT_1, description={"suggested_value": options.get(CONF_EMAIL_RECIPIENT_1)}): str,
             vol.Optional(CONF_EMAIL_RECIPIENT_2, description={"suggested_value": options.get(CONF_EMAIL_RECIPIENT_2)}): str,
 
-            # Mobil Notifiering
-            vol.Optional(CONF_NOTIFY_SERVICE_1, description={"suggested_value": options.get(CONF_NOTIFY_SERVICE_1)}): str,
-            vol.Optional(CONF_NOTIFY_SERVICE_2, description={"suggested_value": options.get(CONF_NOTIFY_SERVICE_2)}): str,
+            # Mobil Notifiering (Nu med Dropdown)
+            vol.Optional(CONF_NOTIFY_SERVICE_1, description={"suggested_value": options.get(CONF_NOTIFY_SERVICE_1)}): notify_selector,
+            vol.Optional(CONF_NOTIFY_SERVICE_2, description={"suggested_value": options.get(CONF_NOTIFY_SERVICE_2)}): notify_selector,
         })
 
         return self.async_show_form(step_id="init", data_schema=options_schema)

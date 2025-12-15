@@ -1,4 +1,4 @@
-# Version: 0.11.0 - 2025-12-15
+# Version: 0.11.1 - 2025-12-15
 """Konstanter för Mail Agent."""
 import logging
 
