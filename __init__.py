@@ -1,4 +1,4 @@
-# Version: 0.2.0 - 2025-12-15
+# Version: 0.3.2 - 2025-12-15
 """Mail Agent - Initialisering och mail-loop via Config Entry."""
 
 import imaplib
@@ -18,14 +18,19 @@ from .const import (
     CONF_USERNAME,
     CONF_PASSWORD,
     CONF_FOLDER,
+    CONF_SCAN_INTERVAL,
+    CONF_ENABLE_DEBUG,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_ENABLE_DEBUG,
 )
 
-PLATFORMS = []  # Vi har inga sensor/binary_sensor plattformar än, allt körs här.
+PLATFORMS = []
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Sätt upp Mail Agent från en config entry (UI)."""
 
+    # Hämta anslutningsdata
     config = entry.data
     server = config[CONF_IMAP_SERVER]
     port = config[CONF_IMAP_PORT]
@@ -33,22 +38,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     password = config[CONF_PASSWORD]
     folder = config[CONF_FOLDER]
 
-    LOGGER.info("Initierar Mail Agent för %s", user)
+    # Hämta inställningar (options) med fallback till default
+    scan_interval = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+    enable_debug = entry.options.get(CONF_ENABLE_DEBUG, DEFAULT_ENABLE_DEBUG)
 
-    scanner = MailAgentScanner(hass, server, port, user, password, folder)
-
-    # Starta scanningen direkt
-    # Spara "unsubscribe" funktionen så vi kan stänga av den om integrationen tas bort
-    remove_listener = async_track_time_interval(
-        hass, scanner.check_mail, timedelta(seconds=60)
+    LOGGER.info(
+        "Initierar Mail Agent för %s (Intervall: %ss, Debug: %s)",
+        user,
+        scan_interval,
+        enable_debug,
     )
 
-    # Spara referenser i hass.data så vi kommer åt dem vid behov
+    scanner = MailAgentScanner(
+        hass, server, port, user, password, folder, enable_debug
+    )
+
+    # Starta scanningen med det konfigurerade intervallet
+    remove_listener = async_track_time_interval(
+        hass, scanner.check_mail, timedelta(seconds=scan_interval)
+    )
+
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
         "scanner": scanner,
         "remove_listener": remove_listener,
     }
+
+    # Lägg till lyssnare för uppdateringar av options
+    entry.async_on_unload(entry.add_update_listener(update_listener))
 
     return True
 
@@ -57,23 +74,28 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Städa upp när integrationen tas bort."""
     if entry.entry_id in hass.data[DOMAIN]:
         data = hass.data[DOMAIN][entry.entry_id]
-        # Stoppa timer-loopen
         data["remove_listener"]()
         hass.data[DOMAIN].pop(entry.entry_id)
 
     return True
 
 
+async def update_listener(hass: HomeAssistant, entry: ConfigEntry):
+    """Hantera uppdateringar av options (körs när användaren ändrar inställningar)."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
 class MailAgentScanner:
     """Klass för att hantera IMAP-scanning och processning."""
 
-    def __init__(self, hass, server, port, user, password, folder):
+    def __init__(self, hass, server, port, user, password, folder, enable_debug):
         self.hass = hass
         self.server = server
         self.port = port
         self.user = user
         self.password = password
         self.folder = folder
+        self.enable_debug = enable_debug
 
     async def check_mail(self, now=None):
         """Asynkron wrapper."""
@@ -97,7 +119,8 @@ class MailAgentScanner:
             if not mail_ids:
                 return
 
-            LOGGER.info("Hittade %s nya mail.", len(mail_ids))
+            if self.enable_debug:
+                LOGGER.info("Hittade %s nya mail.", len(mail_ids))
 
             for mail_id in mail_ids:
                 res, msg_data = mail_con.fetch(mail_id, "(RFC822)")
@@ -106,25 +129,26 @@ class MailAgentScanner:
                     if isinstance(response_part, tuple):
                         msg = email.message_from_bytes(response_part[1])
 
-                        # Avkoda ämne
                         subject, encoding = decode_header(msg["Subject"])[0]
                         if isinstance(subject, bytes):
                             subject = subject.decode(encoding if encoding else "utf-8")
 
                         sender = msg.get("From")
-
-                        # Extrahera brödtext (body)
                         body_text = self._get_mail_body(msg)
 
-                        # DEBUG UTMATNING - NU MED BODY
-                        LOGGER.warning(
-                            "\n--- MAIL AGENT DEBUG ---\nFrån: %s\nÄmne: %s\nMeddelande:\n%s\n------------------------",
-                            sender,
-                            subject,
-                            body_text,
-                        )
+                        # Kontrollera bilagor
+                        has_attachment = self._check_for_attachments(msg)
+                        attachment_str = "TRUE" if has_attachment else "FALSE"
 
-                        # Här kommer vi senare lägga in logik för att skicka till Gemini
+                        # KONTROLLERAD DEBUG-UTSKRIFT
+                        if self.enable_debug:
+                            LOGGER.info(
+                                "\n--- MAIL AGENT DEBUG ---\nFrån: %s\nÄmne: %s\nBilaga: %s\nMeddelande:\n%s\n------------------------",
+                                sender,
+                                subject,
+                                attachment_str,
+                                body_text,
+                            )
 
         except Exception as e:
             LOGGER.error("Fel vid mail-check: %s", e)
@@ -136,15 +160,26 @@ class MailAgentScanner:
                 except Exception:
                     pass
 
+    def _check_for_attachments(self, msg):
+        """Kontrollera om mailet innehåller bilagor."""
+        if msg.is_multipart():
+            for part in msg.walk():
+                if part.get_content_maintype() == 'multipart':
+                    continue
+
+                disposition = part.get("Content-Disposition")
+                if disposition and "attachment" in disposition:
+                    return True
+        return False
+
     def _get_mail_body(self, msg):
-        """Extrahera textinnehållet från ett mail (multipart eller plain)."""
+        """Extrahera textinnehållet från ett mail."""
         body = ""
         if msg.is_multipart():
             for part in msg.walk():
                 content_type = part.get_content_type()
                 content_disposition = str(part.get("Content-Disposition"))
 
-                # Vi letar efter text/plain primärt, och ignorerar bilagor
                 if (
                     content_type == "text/plain"
                     and "attachment" not in content_disposition
@@ -156,11 +191,11 @@ class MailAgentScanner:
                             body = payload.decode(
                                 charset if charset else "utf-8", errors="replace"
                             )
-                            break  # Vi tar första text-delen vi hittar
+                            break
                     except Exception as e:
-                        LOGGER.warning("Kunde inte avkoda text-del: %s", e)
+                        if self.enable_debug:
+                            LOGGER.warning("Kunde inte avkoda text-del: %s", e)
         else:
-            # Inte multipart, vanligt textmail
             try:
                 payload = msg.get_payload(decode=True)
                 charset = msg.get_content_charset()
@@ -169,6 +204,7 @@ class MailAgentScanner:
                         charset if charset else "utf-8", errors="replace"
                     )
             except Exception as e:
-                LOGGER.warning("Kunde inte avkoda body: %s", e)
+                if self.enable_debug:
+                    LOGGER.warning("Kunde inte avkoda body: %s", e)
 
         return body.strip()

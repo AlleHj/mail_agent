@@ -26,11 +26,22 @@
     "step": {
       "init": {
         "title": "Inställningar för Mail Agent",
+        "description": "Här kan du ändra både anslutningsuppgifter och beteende.",
         "data": {
+          "imap_server": "IMAP Server",
+          "imap_port": "Port",
+          "username": "Användarnamn (Email)",
+          "password": "Lösenord",
+          "folder": "Mapp (t.ex. INBOX)",
           "scan_interval": "Sökintervall (sekunder)",
           "enable_debug": "Aktivera utökad felsökningsloggning"
         }
       }
+    },
+    "error": {
+      "cannot_connect": "Kunde inte ansluta till servern.",
+      "invalid_auth": "Fel användarnamn eller lösenord.",
+      "unknown": "Ett okänt fel inträffade."
     }
   }
 }
