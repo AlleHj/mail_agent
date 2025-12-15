@@ -3,9 +3,9 @@
     "step": {
       "user": {
         "title": "Konfigurera Mail Agent",
-        "description": "Ange dina IMAP-uppgifter.",
+        "description": "Ange dina IMAP-uppgifter för att läsa mail.",
         "data": {
-          "imap_server": "IMAP Server",
+          "imap_server": "IMAP Server (Läsa)",
           "imap_port": "Port",
           "username": "Användarnamn",
           "password": "Lösenord",
@@ -28,21 +28,22 @@
         "title": "Inställningar",
         "data": {
           "imap_server": "IMAP Server",
-          "imap_port": "Port",
+          "imap_port": "IMAP Port",
           "username": "Användarnamn",
           "password": "Lösenord",
           "folder": "Mapp",
+          "smtp_server": "SMTP Server (Skicka)",
+          "smtp_port": "SMTP Port (T.ex. 587)",
           "scan_interval": "Sökintervall",
           "enable_debug": "Debug",
           "gemini_api_key": "Google Gemini API Key",
           "gemini_model": "Modellnamn",
           "calendar_entity_1": "Kalender 1 (Valfri)",
           "calendar_entity_2": "Kalender 2 (Valfri)",
-          "email_service": "Välj E-posttjänst (notify)",
           "email_recipient_1": "E-postmottagare 1",
           "email_recipient_2": "E-postmottagare 2",
-          "notify_service_1": "Välj Mobiltjänst 1 (notify)",
-          "notify_service_2": "Välj Mobiltjänst 2 (notify)"
+          "notify_service_1": "Mobiltjänst 1 (notify)",
+          "notify_service_2": "Mobiltjänst 2 (notify)"
         }
       }
     }

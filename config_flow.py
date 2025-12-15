@@ -1,4 +1,4 @@
-# Version: 0.11.2 - 2025-12-15
+# Version: 0.12.0 - 2025-12-15
 """Config flow för Mail Agent integration."""
 
 import imaplib
@@ -27,18 +27,20 @@ from .const import (
     CONF_USERNAME,
     CONF_PASSWORD,
     CONF_FOLDER,
+    CONF_SMTP_SERVER,  # Ny
+    CONF_SMTP_PORT,    # Ny
     CONF_SCAN_INTERVAL,
     CONF_ENABLE_DEBUG,
     CONF_GEMINI_API_KEY,
     CONF_GEMINI_MODEL,
     CONF_CALENDAR_1,
     CONF_CALENDAR_2,
-    CONF_EMAIL_SERVICE,
     CONF_EMAIL_RECIPIENT_1,
     CONF_EMAIL_RECIPIENT_2,
     CONF_NOTIFY_SERVICE_1,
     CONF_NOTIFY_SERVICE_2,
-    DEFAULT_PORT,
+    DEFAULT_IMAP_PORT,
+    DEFAULT_SMTP_PORT, # Ny
     DEFAULT_FOLDER,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_ENABLE_DEBUG,
@@ -94,18 +96,18 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
             vol.Required(CONF_IMAP_SERVER): str,
             vol.Required(CONF_USERNAME): str,
             vol.Required(CONF_PASSWORD): str,
-            vol.Optional(CONF_IMAP_PORT, default=DEFAULT_PORT): int,
+            vol.Optional(CONF_IMAP_PORT, default=DEFAULT_IMAP_PORT): int,
             vol.Optional(CONF_FOLDER, default=DEFAULT_FOLDER): str,
         })
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
 
 class MailAgentOptionsFlowHandler(OptionsFlow):
-    """Hantera inställningar inklusive Gemini, Kalendrar och Notifieringar."""
+    """Hantera inställningar inklusive SMTP, Gemini, Kalendrar och Notifieringar."""
 
     async def async_step_init(self, user_input=None) -> ConfigFlowResult:
         if user_input is not None:
-            # Uppdatera Connection Data
+            # Uppdatera Connection Data (IMAP)
             connection_data = {
                 CONF_IMAP_SERVER: user_input[CONF_IMAP_SERVER],
                 CONF_IMAP_PORT: user_input[CONF_IMAP_PORT],
@@ -115,13 +117,14 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
             }
             # Uppdatera Options
             options_data = {
+                CONF_SMTP_SERVER: user_input.get(CONF_SMTP_SERVER), # Ny
+                CONF_SMTP_PORT: user_input.get(CONF_SMTP_PORT),     # Ny
                 CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL),
                 CONF_ENABLE_DEBUG: user_input.get(CONF_ENABLE_DEBUG),
                 CONF_GEMINI_API_KEY: user_input.get(CONF_GEMINI_API_KEY),
                 CONF_GEMINI_MODEL: user_input.get(CONF_GEMINI_MODEL),
                 CONF_CALENDAR_1: user_input.get(CONF_CALENDAR_1),
                 CONF_CALENDAR_2: user_input.get(CONF_CALENDAR_2),
-                CONF_EMAIL_SERVICE: user_input.get(CONF_EMAIL_SERVICE),
                 CONF_EMAIL_RECIPIENT_1: user_input.get(CONF_EMAIL_RECIPIENT_1),
                 CONF_EMAIL_RECIPIENT_2: user_input.get(CONF_EMAIL_RECIPIENT_2),
                 CONF_NOTIFY_SERVICE_1: user_input.get(CONF_NOTIFY_SERVICE_1),
@@ -134,22 +137,19 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
         config = self.config_entry.data
         options = self.config_entry.options
 
-        # Hämta alla tillgängliga notify-tjänster
+        # Hämta mobil-tjänster
         notify_services = []
         services = self.hass.services.async_services()
         if "notify" in services:
             for service in services["notify"]:
                 notify_services.append(f"notify.{service}")
-
-        # Sortera listan för snyggare UI
         notify_services.sort()
 
-        # Skapa en selector som tillåter att man väljer från listan ELLER skriver eget
         notify_selector = SelectSelector(
             SelectSelectorConfig(
                 options=notify_services,
                 mode=SelectSelectorMode.DROPDOWN,
-                custom_value=True # Tillåter att man skriver in något som inte finns i listan (t.ex. om tjänsten är nere just nu)
+                custom_value=True
             )
         )
 
@@ -158,12 +158,18 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
         )
 
         options_schema = vol.Schema({
-            # IMAP & AI
+            # IMAP (Läsa)
             vol.Required(CONF_IMAP_SERVER, default=config.get(CONF_IMAP_SERVER)): str,
             vol.Required(CONF_USERNAME, default=config.get(CONF_USERNAME)): str,
             vol.Required(CONF_PASSWORD, default=config.get(CONF_PASSWORD)): str,
-            vol.Optional(CONF_IMAP_PORT, default=config.get(CONF_IMAP_PORT, DEFAULT_PORT)): int,
+            vol.Optional(CONF_IMAP_PORT, default=config.get(CONF_IMAP_PORT, DEFAULT_IMAP_PORT)): int,
             vol.Optional(CONF_FOLDER, default=config.get(CONF_FOLDER, DEFAULT_FOLDER)): str,
+
+            # SMTP (Skicka) - NYTT
+            vol.Optional(CONF_SMTP_SERVER, description={"suggested_value": options.get(CONF_SMTP_SERVER, "")}): str,
+            vol.Optional(CONF_SMTP_PORT, default=options.get(CONF_SMTP_PORT, DEFAULT_SMTP_PORT)): int,
+
+            # AI
             vol.Optional(CONF_SCAN_INTERVAL, default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): cv.positive_int,
             vol.Optional(CONF_ENABLE_DEBUG, default=options.get(CONF_ENABLE_DEBUG, DEFAULT_ENABLE_DEBUG)): bool,
             vol.Optional(CONF_GEMINI_API_KEY, default=options.get(CONF_GEMINI_API_KEY, "")): str,
@@ -173,12 +179,11 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
             vol.Optional(CONF_CALENDAR_1, description={"suggested_value": options.get(CONF_CALENDAR_1)}): calendar_selector,
             vol.Optional(CONF_CALENDAR_2, description={"suggested_value": options.get(CONF_CALENDAR_2)}): calendar_selector,
 
-            # E-post Notifiering (Nu med Dropdown)
-            vol.Optional(CONF_EMAIL_SERVICE, description={"suggested_value": options.get(CONF_EMAIL_SERVICE)}): notify_selector,
+            # E-post Mottagare (Ingen service längre, vi skickar direkt)
             vol.Optional(CONF_EMAIL_RECIPIENT_1, description={"suggested_value": options.get(CONF_EMAIL_RECIPIENT_1)}): str,
             vol.Optional(CONF_EMAIL_RECIPIENT_2, description={"suggested_value": options.get(CONF_EMAIL_RECIPIENT_2)}): str,
 
-            # Mobil Notifiering (Nu med Dropdown)
+            # Mobil Notifiering
             vol.Optional(CONF_NOTIFY_SERVICE_1, description={"suggested_value": options.get(CONF_NOTIFY_SERVICE_1)}): notify_selector,
             vol.Optional(CONF_NOTIFY_SERVICE_2, description={"suggested_value": options.get(CONF_NOTIFY_SERVICE_2)}): notify_selector,
         })
