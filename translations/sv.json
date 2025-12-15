@@ -25,23 +25,22 @@
   "options": {
     "step": {
       "init": {
-        "title": "Inställningar för Mail Agent",
-        "description": "Här kan du ändra både anslutningsuppgifter och beteende.",
+        "title": "Inställningar",
+        "description": "Konfigurera AI och valfria kalendrar för automatbokning.",
         "data": {
           "imap_server": "IMAP Server",
           "imap_port": "Port",
-          "username": "Användarnamn (Email)",
+          "username": "Användarnamn",
           "password": "Lösenord",
-          "folder": "Mapp (t.ex. INBOX)",
-          "scan_interval": "Sökintervall (sekunder)",
-          "enable_debug": "Aktivera utökad felsökningsloggning"
+          "folder": "Mapp",
+          "scan_interval": "Sökintervall",
+          "enable_debug": "Debug",
+          "gemini_api_key": "Google Gemini API Key",
+          "gemini_model": "Modellnamn",
+          "calendar_entity_1": "Kalender 1 (Valfri)",
+          "calendar_entity_2": "Kalender 2 (Valfri)"
         }
       }
-    },
-    "error": {
-      "cannot_connect": "Kunde inte ansluta till servern.",
-      "invalid_auth": "Fel användarnamn eller lösenord.",
-      "unknown": "Ett okänt fel inträffade."
     }
   }
 }

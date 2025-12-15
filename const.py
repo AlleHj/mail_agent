@@ -1,25 +1,32 @@
-# Version: 0.3.0 - 2025-12-15
+# Version: 0.9.0 - 2025-12-15
 """Konstanter för Mail Agent."""
+
 import logging
 
 DOMAIN = "mail_agent"
 
-# Konfigurationsnycklar (Connection)
+# Connection
 CONF_IMAP_SERVER = "imap_server"
 CONF_IMAP_PORT = "imap_port"
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
 CONF_FOLDER = "folder"
 
-# Konfigurationsnycklar (Options)
+# Options / Gemini
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_ENABLE_DEBUG = "enable_debug"
+CONF_GEMINI_API_KEY = "gemini_api_key"
+CONF_GEMINI_MODEL = "gemini_model"
 
-# Default-värden
+# Options / Calendar
+CONF_CALENDAR_1 = "calendar_entity_1"
+CONF_CALENDAR_2 = "calendar_entity_2"
+
+# Defaults
 DEFAULT_PORT = 993
 DEFAULT_FOLDER = "INBOX"
-DEFAULT_SCAN_INTERVAL = 60  # Sekunder
+DEFAULT_SCAN_INTERVAL = 60
 DEFAULT_ENABLE_DEBUG = False
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash-exp"
 
-# Logger
 LOGGER = logging.getLogger(__package__)
