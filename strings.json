@@ -1,0 +1,25 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Konfigurera Mail Agent",
+        "description": "Ange dina IMAP-uppgifter för att ansluta.",
+        "data": {
+          "imap_server": "IMAP Server",
+          "imap_port": "Port",
+          "username": "Användarnamn (Email)",
+          "password": "Lösenord",
+          "folder": "Mapp (t.ex. INBOX)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kunde inte ansluta till servern.",
+      "invalid_auth": "Fel användarnamn eller lösenord.",
+      "unknown": "Ett okänt fel inträffade."
+    },
+    "abort": {
+      "already_configured": "Detta konto är redan konfigurerat."
+    }
+  }
+}
