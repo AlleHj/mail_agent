@@ -3,30 +3,29 @@
     "step": {
       "user": {
         "title": "Konfigurera Mail Agent",
-        "description": "Ange dina IMAP-uppgifter för att ansluta.",
+        "description": "Ange dina IMAP-uppgifter.",
         "data": {
           "imap_server": "IMAP Server",
           "imap_port": "Port",
-          "username": "Användarnamn (Email)",
+          "username": "Användarnamn",
           "password": "Lösenord",
-          "folder": "Mapp (t.ex. INBOX)"
+          "folder": "Mapp"
         }
       }
     },
     "error": {
-      "cannot_connect": "Kunde inte ansluta till servern.",
-      "invalid_auth": "Fel användarnamn eller lösenord.",
-      "unknown": "Ett okänt fel inträffade."
+      "cannot_connect": "Kunde inte ansluta.",
+      "invalid_auth": "Fel inloggningsuppgifter.",
+      "unknown": "Okänt fel."
     },
     "abort": {
-      "already_configured": "Detta konto är redan konfigurerat."
+      "already_configured": "Redan konfigurerad."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Inställningar",
-        "description": "Konfigurera AI och valfria kalendrar för automatbokning.",
         "data": {
           "imap_server": "IMAP Server",
           "imap_port": "Port",
@@ -38,7 +37,12 @@
           "gemini_api_key": "Google Gemini API Key",
           "gemini_model": "Modellnamn",
           "calendar_entity_1": "Kalender 1 (Valfri)",
-          "calendar_entity_2": "Kalender 2 (Valfri)"
+          "calendar_entity_2": "Kalender 2 (Valfri)",
+          "email_service": "E-posttjänst (t.ex. notify.skicka_epost)",
+          "email_recipient_1": "E-postmottagare 1",
+          "email_recipient_2": "E-postmottagare 2",
+          "notify_service_1": "Mobiltjänst 1 (t.ex. notify.mobile_app_iphone)",
+          "notify_service_2": "Mobiltjänst 2"
         }
       }
     }

@@ -1,4 +1,4 @@
-# Version: 0.9.0 - 2025-12-15
+# Version: 0.11.0 - 2025-12-15
 """Config flow för Mail Agent integration."""
 
 import imaplib
@@ -14,6 +14,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.selector import (
     EntitySelector,
     EntitySelectorConfig,
+    TextSelector,
 )
 
 from .const import (
@@ -30,6 +31,11 @@ from .const import (
     CONF_GEMINI_MODEL,
     CONF_CALENDAR_1,
     CONF_CALENDAR_2,
+    CONF_EMAIL_SERVICE,
+    CONF_EMAIL_RECIPIENT_1,
+    CONF_EMAIL_RECIPIENT_2,
+    CONF_NOTIFY_SERVICE_1,
+    CONF_NOTIFY_SERVICE_2,
     DEFAULT_PORT,
     DEFAULT_FOLDER,
     DEFAULT_SCAN_INTERVAL,
@@ -37,10 +43,8 @@ from .const import (
     DEFAULT_GEMINI_MODEL,
 )
 
-
 async def validate_input(hass: HomeAssistant, data: dict) -> dict:
     """Validera IMAP-anslutning."""
-
     def _test_imap_login():
         try:
             connection = imaplib.IMAP4_SSL(data[CONF_IMAP_SERVER], data[CONF_IMAP_PORT])
@@ -84,20 +88,18 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
                 LOGGER.exception("Oväntat fel")
                 errors["base"] = "unknown"
 
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_IMAP_SERVER): str,
-                vol.Required(CONF_USERNAME): str,
-                vol.Required(CONF_PASSWORD): str,
-                vol.Optional(CONF_IMAP_PORT, default=DEFAULT_PORT): int,
-                vol.Optional(CONF_FOLDER, default=DEFAULT_FOLDER): str,
-            }
-        )
+        schema = vol.Schema({
+            vol.Required(CONF_IMAP_SERVER): str,
+            vol.Required(CONF_USERNAME): str,
+            vol.Required(CONF_PASSWORD): str,
+            vol.Optional(CONF_IMAP_PORT, default=DEFAULT_PORT): int,
+            vol.Optional(CONF_FOLDER, default=DEFAULT_FOLDER): str,
+        })
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
 
 class MailAgentOptionsFlowHandler(OptionsFlow):
-    """Hantera inställningar inklusive Gemini och Kalendrar."""
+    """Hantera inställningar inklusive Gemini, Kalendrar och Notifieringar."""
 
     async def async_step_init(self, user_input=None) -> ConfigFlowResult:
         if user_input is not None:
@@ -117,62 +119,47 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
                 CONF_GEMINI_MODEL: user_input.get(CONF_GEMINI_MODEL),
                 CONF_CALENDAR_1: user_input.get(CONF_CALENDAR_1),
                 CONF_CALENDAR_2: user_input.get(CONF_CALENDAR_2),
+                CONF_EMAIL_SERVICE: user_input.get(CONF_EMAIL_SERVICE),
+                CONF_EMAIL_RECIPIENT_1: user_input.get(CONF_EMAIL_RECIPIENT_1),
+                CONF_EMAIL_RECIPIENT_2: user_input.get(CONF_EMAIL_RECIPIENT_2),
+                CONF_NOTIFY_SERVICE_1: user_input.get(CONF_NOTIFY_SERVICE_1),
+                CONF_NOTIFY_SERVICE_2: user_input.get(CONF_NOTIFY_SERVICE_2),
             }
 
-            self.hass.config_entries.async_update_entry(
-                self.config_entry, data=connection_data
-            )
+            self.hass.config_entries.async_update_entry(self.config_entry, data=connection_data)
             return self.async_create_entry(title="", data=options_data)
 
         config = self.config_entry.data
         options = self.config_entry.options
 
-        # Selector: Visar bara entiteter som är kalendrar
         calendar_selector = EntitySelector(
             EntitySelectorConfig(domain="calendar", multiple=False)
         )
 
-        options_schema = vol.Schema(
-            {
-                # IMAP
-                vol.Required(
-                    CONF_IMAP_SERVER, default=config.get(CONF_IMAP_SERVER)
-                ): str,
-                vol.Required(CONF_USERNAME, default=config.get(CONF_USERNAME)): str,
-                vol.Required(CONF_PASSWORD, default=config.get(CONF_PASSWORD)): str,
-                vol.Optional(
-                    CONF_IMAP_PORT, default=config.get(CONF_IMAP_PORT, DEFAULT_PORT)
-                ): int,
-                vol.Optional(
-                    CONF_FOLDER, default=config.get(CONF_FOLDER, DEFAULT_FOLDER)
-                ): str,
-                # Settings
-                vol.Optional(
-                    CONF_SCAN_INTERVAL,
-                    default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-                ): cv.positive_int,
-                vol.Optional(
-                    CONF_ENABLE_DEBUG,
-                    default=options.get(CONF_ENABLE_DEBUG, DEFAULT_ENABLE_DEBUG),
-                ): bool,
-                # Gemini AI
-                vol.Optional(
-                    CONF_GEMINI_API_KEY, default=options.get(CONF_GEMINI_API_KEY, "")
-                ): str,
-                vol.Optional(
-                    CONF_GEMINI_MODEL,
-                    default=options.get(CONF_GEMINI_MODEL, DEFAULT_GEMINI_MODEL),
-                ): str,
-                # Kalendrar (Optional)
-                vol.Optional(
-                    CONF_CALENDAR_1,
-                    description={"suggested_value": options.get(CONF_CALENDAR_1)},
-                ): calendar_selector,
-                vol.Optional(
-                    CONF_CALENDAR_2,
-                    description={"suggested_value": options.get(CONF_CALENDAR_2)},
-                ): calendar_selector,
-            }
-        )
+        options_schema = vol.Schema({
+            # IMAP & AI
+            vol.Required(CONF_IMAP_SERVER, default=config.get(CONF_IMAP_SERVER)): str,
+            vol.Required(CONF_USERNAME, default=config.get(CONF_USERNAME)): str,
+            vol.Required(CONF_PASSWORD, default=config.get(CONF_PASSWORD)): str,
+            vol.Optional(CONF_IMAP_PORT, default=config.get(CONF_IMAP_PORT, DEFAULT_PORT)): int,
+            vol.Optional(CONF_FOLDER, default=config.get(CONF_FOLDER, DEFAULT_FOLDER)): str,
+            vol.Optional(CONF_SCAN_INTERVAL, default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): cv.positive_int,
+            vol.Optional(CONF_ENABLE_DEBUG, default=options.get(CONF_ENABLE_DEBUG, DEFAULT_ENABLE_DEBUG)): bool,
+            vol.Optional(CONF_GEMINI_API_KEY, default=options.get(CONF_GEMINI_API_KEY, "")): str,
+            vol.Optional(CONF_GEMINI_MODEL, default=options.get(CONF_GEMINI_MODEL, DEFAULT_GEMINI_MODEL)): str,
+
+            # Kalendrar
+            vol.Optional(CONF_CALENDAR_1, description={"suggested_value": options.get(CONF_CALENDAR_1)}): calendar_selector,
+            vol.Optional(CONF_CALENDAR_2, description={"suggested_value": options.get(CONF_CALENDAR_2)}): calendar_selector,
+
+            # E-post Notifiering
+            vol.Optional(CONF_EMAIL_SERVICE, description={"suggested_value": options.get(CONF_EMAIL_SERVICE, "notify.skicka_epost")}): str,
+            vol.Optional(CONF_EMAIL_RECIPIENT_1, description={"suggested_value": options.get(CONF_EMAIL_RECIPIENT_1)}): str,
+            vol.Optional(CONF_EMAIL_RECIPIENT_2, description={"suggested_value": options.get(CONF_EMAIL_RECIPIENT_2)}): str,
+
+            # Mobil Notifiering
+            vol.Optional(CONF_NOTIFY_SERVICE_1, description={"suggested_value": options.get(CONF_NOTIFY_SERVICE_1)}): str,
+            vol.Optional(CONF_NOTIFY_SERVICE_2, description={"suggested_value": options.get(CONF_NOTIFY_SERVICE_2)}): str,
+        })
 
         return self.async_show_form(step_id="init", data_schema=options_schema)
