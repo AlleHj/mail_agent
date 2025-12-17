@@ -1,10 +1,10 @@
-# Version: 0.12.0 - 2025-12-15
+# Version: 0.13.1 - 2025-12-17
 """Konstanter för Mail Agent."""
 import logging
 
 DOMAIN = "mail_agent"
 
-# Connection (IMAP)
+# Connection
 CONF_IMAP_SERVER = "imap_server"
 CONF_IMAP_PORT = "imap_port"
 CONF_USERNAME = "username"
@@ -26,7 +26,6 @@ CONF_CALENDAR_1 = "calendar_entity_1"
 CONF_CALENDAR_2 = "calendar_entity_2"
 
 # Options / Notifications
-# Vi tar bort CONF_EMAIL_SERVICE eftersom vi sköter det själva nu
 CONF_EMAIL_RECIPIENT_1 = "email_recipient_1"
 CONF_EMAIL_RECIPIENT_2 = "email_recipient_2"
 CONF_NOTIFY_SERVICE_1 = "notify_service_1"
@@ -34,10 +33,10 @@ CONF_NOTIFY_SERVICE_2 = "notify_service_2"
 
 # Defaults
 DEFAULT_IMAP_PORT = 993
-DEFAULT_SMTP_PORT = 587 # Standard för STARTTLS
+DEFAULT_SMTP_PORT = 587
 DEFAULT_FOLDER = "INBOX"
 DEFAULT_SCAN_INTERVAL = 60
 DEFAULT_ENABLE_DEBUG = False
-DEFAULT_GEMINI_MODEL = "gemini-2.0-flash-exp"
+DEFAULT_GEMINI_MODEL = "gemini-3-pro-preview"  # UPPDATERAD HÄR
 
 LOGGER = logging.getLogger(__package__)

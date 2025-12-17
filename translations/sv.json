@@ -3,23 +3,35 @@
     "step": {
       "user": {
         "title": "Konfigurera Mail Agent",
-        "description": "Ange dina IMAP-uppgifter för att läsa mail.",
+        "description": "Ange alla uppgifter för anslutning, AI och notifieringar.",
         "data": {
           "imap_server": "IMAP Server (Läsa)",
-          "imap_port": "Port",
-          "username": "Användarnamn",
+          "imap_port": "IMAP Port",
+          "username": "Användarnamn (Email)",
           "password": "Lösenord",
-          "folder": "Mapp"
+          "folder": "Mapp (t.ex. INBOX)",
+          "smtp_server": "SMTP Server (Skicka)",
+          "smtp_port": "SMTP Port (T.ex. 587)",
+          "scan_interval": "Sökintervall (sekunder)",
+          "enable_debug": "Aktivera felsökningsloggning",
+          "gemini_api_key": "Google Gemini API Key",
+          "gemini_model": "Modellnamn (Gemini)",
+          "calendar_entity_1": "Kalender 1 (Valfri)",
+          "calendar_entity_2": "Kalender 2 (Valfri)",
+          "email_recipient_1": "E-postmottagare 1",
+          "email_recipient_2": "E-postmottagare 2",
+          "notify_service_1": "Välj Mobiltjänst 1 (notify)",
+          "notify_service_2": "Välj Mobiltjänst 2 (notify)"
         }
       }
     },
     "error": {
-      "cannot_connect": "Kunde inte ansluta.",
-      "invalid_auth": "Fel inloggningsuppgifter.",
-      "unknown": "Okänt fel."
+      "cannot_connect": "Kunde inte ansluta till IMAP-servern.",
+      "invalid_auth": "Fel användarnamn eller lösenord.",
+      "unknown": "Ett okänt fel inträffade."
     },
     "abort": {
-      "already_configured": "Redan konfigurerad."
+      "already_configured": "Detta konto är redan konfigurerat."
     }
   },
   "options": {
@@ -27,23 +39,23 @@
       "init": {
         "title": "Inställningar",
         "data": {
-          "imap_server": "IMAP Server",
+          "imap_server": "IMAP Server (Läsa)",
           "imap_port": "IMAP Port",
           "username": "Användarnamn",
           "password": "Lösenord",
           "folder": "Mapp",
           "smtp_server": "SMTP Server (Skicka)",
-          "smtp_port": "SMTP Port (T.ex. 587)",
+          "smtp_port": "SMTP Port",
           "scan_interval": "Sökintervall",
           "enable_debug": "Debug",
           "gemini_api_key": "Google Gemini API Key",
           "gemini_model": "Modellnamn",
-          "calendar_entity_1": "Kalender 1 (Valfri)",
-          "calendar_entity_2": "Kalender 2 (Valfri)",
+          "calendar_entity_1": "Kalender 1",
+          "calendar_entity_2": "Kalender 2",
           "email_recipient_1": "E-postmottagare 1",
           "email_recipient_2": "E-postmottagare 2",
-          "notify_service_1": "Mobiltjänst 1 (notify)",
-          "notify_service_2": "Mobiltjänst 2 (notify)"
+          "notify_service_1": "Mobiltjänst 1",
+          "notify_service_2": "Mobiltjänst 2"
         }
       }
     }
