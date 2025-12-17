@@ -1,63 +1,49 @@
-# Mail Agent för Home Assistant
+Mail Agent för Home Assistant
+Version: 0.16.0
+Uppdaterad: 2025-12-17
 
-**Mail Agent** är en intelligent integration för Home Assistant som övervakar din e-post, analyserar innehållet med hjälp av Google Gemini AI och automatiskt agerar på viktig information. Den kan skapa kalenderhändelser, skicka notifieringar och vidarebefordra information via e-post.
+Mail Agent är en intelligent "Custom Component" för Home Assistant som automatiserar hanteringen av inkommande post. Genom att kombinera Google Gemini (Generativ AI) med traditionell e-posthantering (IMAP/SMTP), fungerar komponenten som en smart sekreterare som läser dina mail, förstår innehållet (inklusive bilagor) och automatiskt bokar in möten i din kalender.
 
-## 🌟 Funktioner
+🚀 Huvudfunktioner i v0.16.0
+  🧠 AI-Driven Analys: Använder Google Gemini (gemini-3-pro-preview) för att förstå naturligt språk i mail och bifogade PDF-kallelser.
+  📅 Automatisk Kalenderbokning: Extraherar tid, plats och sammanfattning från ostrukturerad text och skapar händelser i din kalender.
+  🛡️ Trådsäkerhet & Global Låsning: Inbyggd "Scanning Lock" som förhindrar att samma mail bearbetas två gånger.
+  📧 Robust SMTP-motor:
+  Dynamisk Bilagehantering: Skickar endast multipart-mail om bilagor faktiskt finns (eliminerar "spök-bilagor").
+  Anpassat Avsändarnamn: Ställ in ett snyggt namn (t.ex. "Min Sekreterare") för utgående mail.
+  🧩 Modulär Arkitektur: Byggd med "Strategy Pattern". Specifik logik (t.ex. för kallelser) ligger i separata filer, vilket gör systemet redo för framtida expansion (t.ex. fakturor).
 
-*   **Smart E-postövervakning**: Ansluter till din e-post via IMAP och söker efter nya meddelanden.
-*   **AI-Analys**: Använder Google Gemini (via `google-genai` SDK) för att förstå innehållet i e-postmeddelanden och bilagor.
-*   **Automatisk Kalenderhantering**: Identifierar händelser, tider och platser i dina mail och lägger automatiskt till dem i dina Home Assistant-kalendrar.
-*   **Notifieringar**: Skickar notiser till dina mobila enheter via Home Assistants notify-tjänster när en viktig händelse hittas.
-*   **SMTP-stöd**: Kan skicka sammanfattande e-postmeddelanden med bilagor direkt via SMTP till konfigurerade mottagare.
-*   **Händelsestyrd**: Publicerar händelsen `mail_agent.scanned_document` i Home Assistant, vilket gör det möjligt att skapa kraftfulla automationer baserade på inkommande post.
+📋 Krav
+Home Assistant: Version 2024.x eller senare.
+Google AI Studio API-nyckel: För tillgång till Gemini.
+E-postkonto: IMAP (för att läsa) och SMTP (för att skicka) aktiverat.
+Tips: Använd App-lösenord för Gmail.
 
-## 📋 Systemkrav
+🔧 Installation
+Ladda ner mappen mail_agent och placera den i /config/custom_components/.
+Starta om Home Assistant.
+Gå till Inställningar -> Enheter & Tjänster -> Lägg till integration.
+Sök efter "Mail Agent" och följ guiden.
 
-*   **Home Assistant**: Senaste versionen rekommenderas.
-*   **Python-paket**: `google-genai` (installeras automatiskt).
-*   **Google Gemini API-nyckel**: Krävs för AI-analysen.
-*   **E-postkonto**: Tillgång till IMAP (för läsning) och SMTP (för utskick).
+⚙️ Konfiguration
+Allt konfigureras direkt via UI (Config Flow). Inga YAML-filer behövs.
+Anslutning
+IMAP: Server, Port, Användare, Lösenord, Mapp.
+SMTP: Server, Port, Avsändarnamn (Nytt!).
 
-## 🚀 Installation
+Logik & AI
+Tolkningstyp: Välj vad integrationen ska göra (Just nu: "Tolka kallelse").
+Gemini: API-nyckel och modellnamn.
+Sökintervall: Hur ofta inkorgen ska kollas (sekunder).
 
-### Manuell Installation
+Integrationer
+Kalendrar: Välj upp till två kalendrar för bokningar.
+Notifieringar: Välj vilka mobiler och e-postadresser som ska få notiser.
 
-1.  Ladda ner mappen `mail_agent` från detta repository.
-2.  Kopiera mappen till `custom_components` i din Home Assistant-konfigurationsmapp.
-3.  Starta om Home Assistant.
+🛠️ Felsökning
+Dubbla notiser? Kontrollera att du kör v0.15.1+ som har Global Låsning.
+Import-fel på google.genai? Starta om Home Assistant helt för att ladda in nya bibliotek.
+Inga mail hittas? Kontrollera att mailen är markerade som Olästa (Unseen).
 
-## ⚙️ Konfiguration
-
-Integrationen konfigureras helt via användargränssnittet i Home Assistant.
-
-1.  Gå till **Inställningar** > **Enheter & Tjänster**.
-2.  Klicka på **Lägg till integration** och sök efter **Mail Agent**.
-3.  Följ stegen för att ansluta till din e-postserver (IMAP).
-
-### Inställningar (Options)
-
-Efter installationen kan du klicka på **Konfigurera** på integrationen för att justera inställningar:
-
-*   **Sökintervall**: Hur ofta (i sekunder) agenten ska leta efter nya mail.
-*   **Gemini API**: Din API-nyckel och val av modell (t.ex. `gemini-3-pro-preview`).
-*   **Kalendrar**: Välj vilka kalendrar i Home Assistant som ska uppdateras.
-*   **Notifieringar**: Välj vilka notify-tjänster (t.ex. mobiltelefoner) som ska få notiser.
-*   **E-postmottagare**: Ange e-postadresser som ska få vidarebefordrad information via SMTP.
-*   **SMTP-inställningar**: Server och port för utgående e-post.
-
-## 🛠️ Versionhantering
-
-### v0.12.1 (2025-12-15)
-*   Uppdaterad SDK-import för Google GenAI.
-*   Förbättrad felhantering och loggning.
-
-### v0.12.0 (2025-12-15)
-*   Lagt till stöd för direkt SMTP-utskick.
-*   Uppdaterat konfigurationsflöde för att inkludera SMTP-inställningar.
-
-### v0.11.1
-*   Initial release med grundläggande IMAP-stöd och Gemini-integration.
-
-## 📝 Licens
-
-Detta projekt är licensierat under MIT-licensen.
+📄 Licens
+Detta projekt är utvecklat som en anpassad integration för personligt bruk (Open Source).
