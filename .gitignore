@@ -15,8 +15,5 @@ __pycache__/
 
 # Home Assistant
 .storage/
-
-# Om du vill ignorera allt i custom_components utom din egen komponent (kräver att du flyttar filerna till custom_components/mail_agent/)
-custom_components/*
 !custom_components/mail_agent/
 
