@@ -1,4 +1,4 @@
-# Version: 0.14.1 - 2025-12-17
+# Version: 0.16.0 - 2025-12-17
 """Config flow för Mail Agent integration."""
 
 import imaplib
@@ -29,6 +29,7 @@ from .const import (
     CONF_FOLDER,
     CONF_SMTP_SERVER,
     CONF_SMTP_PORT,
+    CONF_SMTP_SENDER_NAME, # Ny
     CONF_SCAN_INTERVAL,
     CONF_ENABLE_DEBUG,
     CONF_GEMINI_API_KEY,
@@ -40,7 +41,7 @@ from .const import (
     CONF_NOTIFY_SERVICE_1,
     CONF_NOTIFY_SERVICE_2,
     CONF_INTERPRETATION_TYPE,
-    TYPE_KALLELSE,           # Uppdaterad
+    TYPE_KALLELSE,
     DEFAULT_IMAP_PORT,
     DEFAULT_SMTP_PORT,
     DEFAULT_FOLDER,
@@ -48,6 +49,7 @@ from .const import (
     DEFAULT_ENABLE_DEBUG,
     DEFAULT_GEMINI_MODEL,
     DEFAULT_INTERPRETATION_TYPE,
+    DEFAULT_SMTP_SENDER_NAME, # Ny
 )
 
 async def validate_input(hass: HomeAssistant, data: dict) -> dict:
@@ -82,7 +84,6 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input=None) -> ConfigFlowResult:
         errors = {}
 
-        # Hämta notify-tjänster
         notify_services = []
         services = self.hass.services.async_services()
         if "notify" in services:
@@ -107,7 +108,8 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
                 options_config = {
                     CONF_SMTP_SERVER: user_input.get(CONF_SMTP_SERVER),
                     CONF_SMTP_PORT: user_input.get(CONF_SMTP_PORT),
-                    CONF_INTERPRETATION_TYPE: user_input.get(CONF_INTERPRETATION_TYPE), # Ny
+                    CONF_SMTP_SENDER_NAME: user_input.get(CONF_SMTP_SENDER_NAME), # Ny
+                    CONF_INTERPRETATION_TYPE: user_input.get(CONF_INTERPRETATION_TYPE),
                     CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL),
                     CONF_ENABLE_DEBUG: user_input.get(CONF_ENABLE_DEBUG),
                     CONF_GEMINI_API_KEY: user_input.get(CONF_GEMINI_API_KEY),
@@ -133,7 +135,6 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
                 LOGGER.exception("Oväntat fel")
                 errors["base"] = "unknown"
 
-        # Selectors
         notify_selector = SelectSelector(
             SelectSelectorConfig(
                 options=notify_services,
@@ -146,7 +147,6 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
             EntitySelectorConfig(domain="calendar", multiple=False)
         )
 
-        # NY SELECTOR FÖR TOLKNINGSTYP (SVENSKA)
         type_selector = SelectSelector(
             SelectSelectorConfig(
                 options=[
@@ -168,6 +168,8 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
             # SMTP
             vol.Optional(CONF_SMTP_SERVER): str,
             vol.Optional(CONF_SMTP_PORT, default=DEFAULT_SMTP_PORT): int,
+            # NYTT FÄLT FÖR AVSÄNDARNAMN
+            vol.Optional(CONF_SMTP_SENDER_NAME, default=DEFAULT_SMTP_SENDER_NAME): str,
 
             # Logic Type
             vol.Optional(CONF_INTERPRETATION_TYPE, default=DEFAULT_INTERPRETATION_TYPE): type_selector,
@@ -203,6 +205,7 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
             options_data = {
                 CONF_SMTP_SERVER: user_input.get(CONF_SMTP_SERVER),
                 CONF_SMTP_PORT: user_input.get(CONF_SMTP_PORT),
+                CONF_SMTP_SENDER_NAME: user_input.get(CONF_SMTP_SENDER_NAME), # Ny
                 CONF_INTERPRETATION_TYPE: user_input.get(CONF_INTERPRETATION_TYPE),
                 CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL),
                 CONF_ENABLE_DEBUG: user_input.get(CONF_ENABLE_DEBUG),
@@ -260,10 +263,10 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
 
             vol.Optional(CONF_SMTP_SERVER, description={"suggested_value": options.get(CONF_SMTP_SERVER, "")}): str,
             vol.Optional(CONF_SMTP_PORT, default=options.get(CONF_SMTP_PORT, DEFAULT_SMTP_PORT)): int,
+            # NYTT FÄLT FÖR OPTIONS
+            vol.Optional(CONF_SMTP_SENDER_NAME, default=options.get(CONF_SMTP_SENDER_NAME, DEFAULT_SMTP_SENDER_NAME)): str,
 
-            # Logic Type
             vol.Optional(CONF_INTERPRETATION_TYPE, default=options.get(CONF_INTERPRETATION_TYPE, DEFAULT_INTERPRETATION_TYPE)): type_selector,
-
             vol.Optional(CONF_SCAN_INTERVAL, default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): cv.positive_int,
             vol.Optional(CONF_ENABLE_DEBUG, default=options.get(CONF_ENABLE_DEBUG, DEFAULT_ENABLE_DEBUG)): bool,
             vol.Optional(CONF_GEMINI_API_KEY, default=options.get(CONF_GEMINI_API_KEY, "")): str,

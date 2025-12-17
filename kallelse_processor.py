@@ -1,4 +1,4 @@
-# Version: 0.15.2 - 2025-12-17
+# Version: 0.16.0 - 2025-12-17
 """Processor för att tolka kallelser och bokningar."""
 
 import json
@@ -12,7 +12,6 @@ from email.mime.base import MIMEBase
 from email import encoders
 from email.utils import formataddr
 
-# KORREKT IMPORT FÖR google-genai SDK
 from google import genai
 from google.genai import types
 
@@ -21,8 +20,6 @@ from .const import LOGGER
 
 class KallelseProcessor:
     """Hanterar logiken för 'Tolka kallelse'."""
-
-    SMTP_SENDER_NAME = "Mail Agent - Kallelser"
 
     def __init__(self, hass, config):
         self.hass = hass
@@ -37,6 +34,9 @@ class KallelseProcessor:
         self.smtp_port = config.get("smtp_port", 587)
         self.smtp_user = config.get("username")
         self.smtp_password = config.get("password")
+
+        # HÄMTA AVSÄNDARNAMN FRÅN CONFIG (Eller fallback)
+        self.smtp_sender_name = config.get("smtp_sender_name", "Mail Agent")
 
         self.email_recipients = [
             r for r in [config.get("email_recipient_1"), config.get("email_recipient_2")] if r
@@ -199,15 +199,11 @@ class KallelseProcessor:
                 LOGGER.error(f"Kunde inte skicka SMTP-mail: {e}")
 
     def _send_smtp_email(self, subject, html_body, files):
-        # FIX: Dynamisk MIME-typ för att undvika "spök-bilagor"
         if not files:
-            # Inga filer? Skicka som rent HTML-mail (inget gem visas)
             msg = MIMEText(html_body, 'html')
         else:
-            # Filer finns? Skapa Multipart-mail
             msg = MIMEMultipart()
             msg.attach(MIMEText(html_body, 'html'))
-
             for file_path in files:
                 try:
                     path = Path(file_path)
@@ -225,12 +221,11 @@ class KallelseProcessor:
                 except Exception as e:
                     LOGGER.error(f"Kunde inte bifoga fil {file_path}: {e}")
 
-        # Gemensamma headers
-        msg['From'] = formataddr((self.SMTP_SENDER_NAME, self.smtp_user))
+        # HÄR ANVÄNDS DET NYA NAMNET FRÅN INSTÄLLNINGARNA
+        msg['From'] = formataddr((self.smtp_sender_name, self.smtp_user))
         msg['To'] = ", ".join(self.email_recipients)
         msg['Subject'] = subject
 
-        # Skicka
         if self.smtp_port == 465:
             server = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port)
         else:
