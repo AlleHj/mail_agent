@@ -1,4 +1,4 @@
-# Version: 0.13.0 - 2025-12-17
+# Version: 0.14.1 - 2025-12-17
 """Config flow för Mail Agent integration."""
 
 import imaplib
@@ -39,12 +39,15 @@ from .const import (
     CONF_EMAIL_RECIPIENT_2,
     CONF_NOTIFY_SERVICE_1,
     CONF_NOTIFY_SERVICE_2,
+    CONF_INTERPRETATION_TYPE,
+    TYPE_KALLELSE,           # Uppdaterad
     DEFAULT_IMAP_PORT,
     DEFAULT_SMTP_PORT,
     DEFAULT_FOLDER,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_ENABLE_DEBUG,
     DEFAULT_GEMINI_MODEL,
+    DEFAULT_INTERPRETATION_TYPE,
 )
 
 async def validate_input(hass: HomeAssistant, data: dict) -> dict:
@@ -77,10 +80,9 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
         return MailAgentOptionsFlowHandler()
 
     async def async_step_user(self, user_input=None) -> ConfigFlowResult:
-        """Hantera det initiala steget vid installation."""
         errors = {}
 
-        # Hämta notify-tjänster för dropdown
+        # Hämta notify-tjänster
         notify_services = []
         services = self.hass.services.async_services()
         if "notify" in services:
@@ -90,12 +92,10 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                # Validera endast IMAP-anslutningen (kritiskt för att funka)
                 info = await validate_input(self.hass, user_input)
                 await self.async_set_unique_id(user_input[CONF_USERNAME])
                 self._abort_if_unique_id_configured()
 
-                # Separera "data" (anslutning) och "options" (inställningar)
                 data_config = {
                     CONF_IMAP_SERVER: user_input[CONF_IMAP_SERVER],
                     CONF_IMAP_PORT: user_input[CONF_IMAP_PORT],
@@ -107,6 +107,7 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
                 options_config = {
                     CONF_SMTP_SERVER: user_input.get(CONF_SMTP_SERVER),
                     CONF_SMTP_PORT: user_input.get(CONF_SMTP_PORT),
+                    CONF_INTERPRETATION_TYPE: user_input.get(CONF_INTERPRETATION_TYPE), # Ny
                     CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL),
                     CONF_ENABLE_DEBUG: user_input.get(CONF_ENABLE_DEBUG),
                     CONF_GEMINI_API_KEY: user_input.get(CONF_GEMINI_API_KEY),
@@ -132,7 +133,7 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
                 LOGGER.exception("Oväntat fel")
                 errors["base"] = "unknown"
 
-        # Definition av Selectors
+        # Selectors
         notify_selector = SelectSelector(
             SelectSelectorConfig(
                 options=notify_services,
@@ -145,30 +146,41 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
             EntitySelectorConfig(domain="calendar", multiple=False)
         )
 
-        # FULLSTÄNDIGT SCHEMA FRÅN START
+        # NY SELECTOR FÖR TOLKNINGSTYP (SVENSKA)
+        type_selector = SelectSelector(
+            SelectSelectorConfig(
+                options=[
+                    {"label": "Tolka kallelse", "value": TYPE_KALLELSE},
+                ],
+                mode=SelectSelectorMode.DROPDOWN,
+                translation_key="interpretation_type"
+            )
+        )
+
         schema = vol.Schema({
-            # Sektion 1: IMAP (Läsa)
+            # IMAP
             vol.Required(CONF_IMAP_SERVER): str,
             vol.Required(CONF_USERNAME): str,
             vol.Required(CONF_PASSWORD): str,
             vol.Optional(CONF_IMAP_PORT, default=DEFAULT_IMAP_PORT): int,
             vol.Optional(CONF_FOLDER, default=DEFAULT_FOLDER): str,
 
-            # Sektion 2: SMTP (Skicka)
+            # SMTP
             vol.Optional(CONF_SMTP_SERVER): str,
             vol.Optional(CONF_SMTP_PORT, default=DEFAULT_SMTP_PORT): int,
 
-            # Sektion 3: AI & Gemini
-            vol.Required(CONF_GEMINI_API_KEY): str, # Gjord till Required för att uppmuntra setup
+            # Logic Type
+            vol.Optional(CONF_INTERPRETATION_TYPE, default=DEFAULT_INTERPRETATION_TYPE): type_selector,
+
+            # AI
+            vol.Required(CONF_GEMINI_API_KEY): str,
             vol.Optional(CONF_GEMINI_MODEL, default=DEFAULT_GEMINI_MODEL): str,
             vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): cv.positive_int,
             vol.Optional(CONF_ENABLE_DEBUG, default=DEFAULT_ENABLE_DEBUG): bool,
 
-            # Sektion 4: Integrationer
+            # Integrations
             vol.Optional(CONF_CALENDAR_1): calendar_selector,
             vol.Optional(CONF_CALENDAR_2): calendar_selector,
-
-            # Sektion 5: Notifieringar
             vol.Optional(CONF_NOTIFY_SERVICE_1): notify_selector,
             vol.Optional(CONF_NOTIFY_SERVICE_2): notify_selector,
             vol.Optional(CONF_EMAIL_RECIPIENT_1): str,
@@ -179,11 +191,8 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class MailAgentOptionsFlowHandler(OptionsFlow):
-    """Hantera inställningar efter installation (Options)."""
-
     async def async_step_init(self, user_input=None) -> ConfigFlowResult:
         if user_input is not None:
-            # Uppdatera IMAP data (kräver omstart/reload egentligen, men sparas i data)
             connection_data = {
                 CONF_IMAP_SERVER: user_input[CONF_IMAP_SERVER],
                 CONF_IMAP_PORT: user_input[CONF_IMAP_PORT],
@@ -191,10 +200,10 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
                 CONF_PASSWORD: user_input[CONF_PASSWORD],
                 CONF_FOLDER: user_input[CONF_FOLDER],
             }
-            # Uppdatera Options
             options_data = {
                 CONF_SMTP_SERVER: user_input.get(CONF_SMTP_SERVER),
                 CONF_SMTP_PORT: user_input.get(CONF_SMTP_PORT),
+                CONF_INTERPRETATION_TYPE: user_input.get(CONF_INTERPRETATION_TYPE),
                 CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL),
                 CONF_ENABLE_DEBUG: user_input.get(CONF_ENABLE_DEBUG),
                 CONF_GEMINI_API_KEY: user_input.get(CONF_GEMINI_API_KEY),
@@ -213,7 +222,6 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
         config = self.config_entry.data
         options = self.config_entry.options
 
-        # Hämta mobil-tjänster
         notify_services = []
         services = self.hass.services.async_services()
         if "notify" in services:
@@ -233,7 +241,16 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
             EntitySelectorConfig(domain="calendar", multiple=False)
         )
 
-        # Schema för att ändra inställningar i efterhand (bör spegla user-steget)
+        type_selector = SelectSelector(
+            SelectSelectorConfig(
+                options=[
+                    {"label": "Tolka kallelse", "value": TYPE_KALLELSE},
+                ],
+                mode=SelectSelectorMode.DROPDOWN,
+                translation_key="interpretation_type"
+            )
+        )
+
         options_schema = vol.Schema({
             vol.Required(CONF_IMAP_SERVER, default=config.get(CONF_IMAP_SERVER)): str,
             vol.Required(CONF_USERNAME, default=config.get(CONF_USERNAME)): str,
@@ -243,6 +260,9 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
 
             vol.Optional(CONF_SMTP_SERVER, description={"suggested_value": options.get(CONF_SMTP_SERVER, "")}): str,
             vol.Optional(CONF_SMTP_PORT, default=options.get(CONF_SMTP_PORT, DEFAULT_SMTP_PORT)): int,
+
+            # Logic Type
+            vol.Optional(CONF_INTERPRETATION_TYPE, default=options.get(CONF_INTERPRETATION_TYPE, DEFAULT_INTERPRETATION_TYPE)): type_selector,
 
             vol.Optional(CONF_SCAN_INTERVAL, default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): cv.positive_int,
             vol.Optional(CONF_ENABLE_DEBUG, default=options.get(CONF_ENABLE_DEBUG, DEFAULT_ENABLE_DEBUG)): bool,

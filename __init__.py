@@ -1,28 +1,18 @@
-# Version: 0.12.1 - 2025-12-15
-"""Mail Agent - Huvudlogik med AI, Kalender och direkt SMTP-utskick."""
+# Version: 0.15.1 - 2025-12-17
+"""Mail Agent - Huvudlogik med Global Låsning (Single Thread Lock)."""
 
 import imaplib
-import smtplib
 import email
-import os
-import json
-import mimetypes
-from datetime import datetime, timedelta
 from email.header import decode_header
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
 from pathlib import Path
-
-# NY SDK IMPORT
-from google import genai
-from google.genai import types
+from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_time_interval
-from homeassistant.util import dt as dt_util
+
+# Importera den nya processorn (SVENSKA)
+from .kallelse_processor import KallelseProcessor
 
 from .const import (
     DOMAIN,
@@ -44,6 +34,8 @@ from .const import (
     CONF_EMAIL_RECIPIENT_2,
     CONF_NOTIFY_SERVICE_1,
     CONF_NOTIFY_SERVICE_2,
+    CONF_INTERPRETATION_TYPE,
+    TYPE_KALLELSE,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_ENABLE_DEBUG,
     DEFAULT_GEMINI_MODEL,
@@ -58,18 +50,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     scanner = MailAgentScanner(
         hass,
-        config[CONF_IMAP_SERVER],
-        config[CONF_IMAP_PORT],
-        config[CONF_USERNAME],
-        config[CONF_PASSWORD],
-        config[CONF_FOLDER],
-        options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-        options.get(CONF_ENABLE_DEBUG, DEFAULT_ENABLE_DEBUG),
-        options.get(CONF_GEMINI_API_KEY),
-        options.get(CONF_GEMINI_MODEL, DEFAULT_GEMINI_MODEL),
-        options.get(CONF_CALENDAR_1),
-        options.get(CONF_CALENDAR_2),
-        options,  # Skickar hela options-objektet
+        {**config, **options}
     )
 
     remove_listener = async_track_time_interval(
@@ -96,41 +77,55 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry):
 
 
 class MailAgentScanner:
-    def __init__(self, hass, server, port, user, password, folder, interval, debug, api_key, model, cal1, cal2, options):
+    def __init__(self, hass, config):
         self.hass = hass
-        # IMAP Settings
-        self.server = server
-        self.port = port
-        self.user = user
-        self.password = password
-        self.folder = folder
+        self.config = config
 
-        # SMTP Settings
-        self.smtp_server = options.get(CONF_SMTP_SERVER)
-        self.smtp_port = options.get(CONF_SMTP_PORT, 587)
+        self.server = config.get(CONF_IMAP_SERVER)
+        self.port = config.get(CONF_IMAP_PORT)
+        self.user = config.get(CONF_USERNAME)
+        self.password = config.get(CONF_PASSWORD)
+        self.folder = config.get(CONF_FOLDER)
 
-        self.scan_interval = interval
-        self.enable_debug = debug
-        self.gemini_api_key = api_key
-        self.gemini_model = model
-        self.cal1 = cal1
-        self.cal2 = cal2
+        self.scan_interval = config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+        self.enable_debug = config.get(CONF_ENABLE_DEBUG, DEFAULT_ENABLE_DEBUG)
 
-        # Notifieringsinställningar
-        self.email_recipients = [
-            r for r in [options.get(CONF_EMAIL_RECIPIENT_1), options.get(CONF_EMAIL_RECIPIENT_2)] if r
-        ]
-        self.notify_services = [
-            s for s in [options.get(CONF_NOTIFY_SERVICE_1), options.get(CONF_NOTIFY_SERVICE_2)] if s
-        ]
+        self.interpretation_type = config.get(CONF_INTERPRETATION_TYPE, TYPE_KALLELSE)
+
+        # Initiera Processor
+        self.processor = None
+        if self.interpretation_type == TYPE_KALLELSE:
+            self.processor = KallelseProcessor(hass, config)
+        else:
+            LOGGER.warning("Okänd tolkningstyp: %s. Fallback till Kallelse.", self.interpretation_type)
+            self.processor = KallelseProcessor(hass, config)
 
         self.storage_dir = Path(hass.config.path("www", "mail_agent_temp"))
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
+        # GLOBAL LOCK: Förhindrar att flera scanningar körs samtidigt
+        self._is_scanning = False
+
     async def check_mail(self, now=None):
-        await self.hass.async_add_executor_job(self._check_mail_sync)
+        """Asynkron startpunkt som anropas av timer."""
+        # OM vi redan scannar -> AVBRYT DIREKT
+        if self._is_scanning:
+            if self.enable_debug:
+                LOGGER.debug("Sökning pågår redan. Hoppar över denna körning för att undvika dubbletter.")
+            return
+
+        # Lås dörren
+        self._is_scanning = True
+
+        try:
+            # Kör den tunga synkrona logiken i en tråd
+            await self.hass.async_add_executor_job(self._check_mail_sync)
+        finally:
+            # Lås upp dörren OAVSETT om det gick bra eller blev fel
+            self._is_scanning = False
 
     def _check_mail_sync(self):
+        """Synkron logik som körs i executor-tråden."""
         mail_con = None
         try:
             mail_con = imaplib.IMAP4_SSL(self.server, self.port)
@@ -142,18 +137,22 @@ class MailAgentScanner:
                 return
 
             mail_ids = messages[0].split()
+
             if self.enable_debug:
-                LOGGER.info("Hittade %s nya mail.", len(mail_ids))
+                LOGGER.info("Hittade %s nya mail. Bearbetar sekventiellt...", len(mail_ids))
 
             for mail_id in mail_ids:
-                res, msg_data = mail_con.fetch(mail_id, "(RFC822)")
-                for response_part in msg_data:
-                    if isinstance(response_part, tuple):
-                        msg = email.message_from_bytes(response_part[1])
-                        self._process_single_mail(msg)
+                try:
+                    res, msg_data = mail_con.fetch(mail_id, "(RFC822)")
+                    for response_part in msg_data:
+                        if isinstance(response_part, tuple):
+                            msg = email.message_from_bytes(response_part[1])
+                            self._process_single_mail(msg)
+                except Exception as e:
+                    LOGGER.error("Fel vid bearbetning av mail ID %s: %s", mail_id, e)
 
         except Exception as e:
-            LOGGER.error("Fel vid mail-check: %s", e)
+            LOGGER.error("Fel vid anslutning/sökning: %s", e)
         finally:
             if mail_con:
                 try:
@@ -169,208 +168,10 @@ class MailAgentScanner:
         attachment_paths = self._save_attachments(msg)
 
         if self.enable_debug:
-            LOGGER.info(f"Bearbetar mail från {sender}. Bilagor: {len(attachment_paths)}")
+            LOGGER.info(f"Hämtat mail från {sender}. Skickar till processor: {self.interpretation_type}")
 
-        if self.gemini_api_key:
-            try:
-                ai_data = self._call_gemini(attachment_paths, subject, body)
-
-                self.hass.bus.fire("mail_agent.scanned_document", {
-                    "sender": sender,
-                    "subject": subject,
-                    "ai_data": ai_data,
-                    "attachments": [str(p) for p in attachment_paths]
-                })
-
-                if self.enable_debug:
-                    LOGGER.info("AI RESULTAT:\n%s", json.dumps(ai_data, indent=2, ensure_ascii=False))
-
-                if ai_data.get("event_found") is True:
-                    # 1. Skapa kalenderbokning (om tid finns)
-                    if ai_data.get("start_time"):
-                        self._create_calendar_events(ai_data)
-
-                    # 2. Skicka notifieringar (Mobil + E-post via SMTP)
-                    self._send_notifications(ai_data, subject, attachment_paths)
-
-            except Exception as e:
-                LOGGER.error("Process-fel: %s", e)
-        elif self.enable_debug:
-            LOGGER.warning("Ingen API-nyckel.")
-
-    def _send_notifications(self, ai_data, original_subject, attachment_paths):
-        """Skickar mobilnotiser och direkta SMTP-mail."""
-
-        summary = ai_data.get("summary", "Okänd händelse")
-        start_time = ai_data.get("start_time", "okänd tid")
-        location = ai_data.get("location", "")
-        description = ai_data.get("description", "")
-
-        # --- MOBILNOTISER (Async-anrop via add_job är ok här då det schemalägger på loopen) ---
-        if self.notify_services:
-            mobile_message = f"Ny bokning: {summary}\nTid: {start_time}"
-            for service in self.notify_services:
-                domain = "notify"
-                service_name = service.replace("notify.", "")
-                self.hass.add_job(
-                    self.hass.services.async_call(
-                        domain, service_name,
-                        {
-                            "title": "Mail Agent",
-                            "message": mobile_message,
-                            "data": {"clickAction": "/calendar"}
-                        }
-                    )
-                )
-
-        # --- E-POSTNOTISER (Direkt via SMTP) ---
-        if self.smtp_server and self.email_recipients:
-            if self.enable_debug:
-                LOGGER.info("Förbereder direkt SMTP-utskick med %s bilagor", len(attachment_paths))
-
-            email_body = f"""
-            <h3>Mail Agent: Ny händelse</h3>
-            <p><b>Händelse:</b> {summary}</p>
-            <p><b>Tid:</b> {start_time}</p>
-            <p><b>Plats:</b> {location}</p>
-            <hr>
-            <p><b>Detaljer:</b><br>{description}</p>
-            <hr>
-            <p><small>Originalämne: {original_subject}</small></p>
-            """
-
-            # ÄNDRING HÄR: Vi anropar funktionen direkt eftersom vi redan är i en tråd.
-            # Ingen async_add_executor_job behövs eller ska användas här.
-            try:
-                self._send_smtp_email(
-                    f"Ny kallelse: {summary}",
-                    email_body,
-                    attachment_paths
-                )
-            except Exception as e:
-                LOGGER.error(f"Kunde inte skicka SMTP-mail: {e}")
-
-    def _send_smtp_email(self, subject, html_body, files):
-        """Skickar mail direkt via SMTP med bilagor."""
-        msg = MIMEMultipart()
-        msg['From'] = self.user
-        msg['To'] = ", ".join(self.email_recipients)
-        msg['Subject'] = subject
-
-        msg.attach(MIMEText(html_body, 'html'))
-
-        # Bifoga filer
-        for file_path in files:
-            try:
-                path = Path(file_path)
-                ctype, encoding = mimetypes.guess_type(path)
-                if ctype is None or encoding is not None:
-                    # No guess could be made, or the file is encoded (compressed), so
-                    # use a generic bag-of-bits type.
-                    ctype = 'application/octet-stream'
-
-                maintype, subtype = ctype.split('/', 1)
-
-                with open(path, 'rb') as f:
-                    file_data = f.read()
-
-                part = MIMEBase(maintype, subtype)
-                part.set_payload(file_data)
-                encoders.encode_base64(part)
-
-                part.add_header(
-                    'Content-Disposition',
-                    f'attachment; filename="{path.name}"'
-                )
-                msg.attach(part)
-            except Exception as e:
-                LOGGER.error(f"Kunde inte bifoga fil {file_path}: {e}")
-
-        # Skicka
-        if self.smtp_port == 465:
-            server = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port)
-        else:
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-            server.starttls()
-
-        server.login(self.user, self.password)
-        server.sendmail(self.user, self.email_recipients, msg.as_string())
-        server.quit()
-        if self.enable_debug:
-            LOGGER.info("SMTP mail skickat framgångsrikt.")
-
-    def _create_calendar_events(self, ai_data):
-        calendars = [c for c in [self.cal1, self.cal2] if c]
-        if not calendars: return
-
-        start_str = ai_data.get("start_time")
-        try:
-            dt_start = dt_util.as_local(datetime.strptime(start_str, "%Y-%m-%d %H:%M:%S"))
-            dt_end = dt_start + timedelta(hours=1)
-        except (ValueError, TypeError):
-            return
-
-        summary = ai_data.get("summary", "Bokat Event")
-        description = f"{ai_data.get('description', '')}\n\n[Auto-skapat av Mail Agent]"
-        location = ai_data.get("location", "")
-
-        for calendar_entity in calendars:
-            if self.enable_debug: LOGGER.info(f"Bokar i {calendar_entity}")
-            self.hass.add_job(
-                self.hass.services.async_call(
-                    "calendar", "create_event",
-                    {
-                        "entity_id": calendar_entity,
-                        "summary": summary,
-                        "description": description,
-                        "start_date_time": dt_start.isoformat(),
-                        "end_date_time": dt_end.isoformat(),
-                        "location": location,
-                    }
-                )
-            )
-
-    def _call_gemini(self, file_paths, subject, body):
-        client = genai.Client(api_key=self.gemini_api_key)
-        uploaded_files = []
-        for path in file_paths:
-            uploaded_files.append(client.files.upload(file=path, config={'mime_type': 'application/pdf'}))
-
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
-
-        prompt = f"""
-        Du är en smart kalender-assistent.
-        Idag är det: {now_str}
-
-        Regler för datum och tid:
-        1. Utgå ALLTID från dagens datum ({now_str}) när du tolkar relativa tidsuttryck.
-        2. Om ett datum anges utan år (t.ex. "16/12"), välj det år som gör datumet kommande (nära i framtiden).
-        3. Gissa aldrig på dåtid.
-
-        Ämne: {subject}
-        Text: {body}
-
-        Svara strikt med JSON:
-        {{
-            "event_found": boolean,
-            "summary": "Kort beskrivning",
-            "description": "Sammanfattning",
-            "start_time": "YYYY-MM-DD HH:MM:SS (eller null)",
-            "location": "Plats",
-            "type": "Typ"
-        }}
-        """
-
-        contents = uploaded_files + [prompt]
-        response = client.models.generate_content(
-            model=self.gemini_model, contents=contents, config={'response_mime_type': 'application/json'}
-        )
-
-        for f in uploaded_files:
-            try: client.files.delete(name=f.name)
-            except: pass
-
-        return json.loads(response.text)
+        if self.processor:
+            self.processor.process_email(sender, subject, body, attachment_paths)
 
     def _save_attachments(self, msg):
         saved_paths = []
