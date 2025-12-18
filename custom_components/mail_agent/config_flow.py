@@ -1,4 +1,4 @@
-# Fil: custom_components/mail_agent/config_flow.py | Version: 0.17.0 | Datum: 2025-12-18
+# Fil: custom_components/mail_agent/config_flow.py | Version: 0.18.0 | Datum: 2025-12-18
 """Config flow för Mail Agent integration."""
 
 import imaplib

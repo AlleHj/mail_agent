@@ -1,4 +1,4 @@
-# Version: 0.16.0 - 2025-12-17
+# Version: 0.18.0 - 2025-12-18
 """Processor för att tolka kallelser och bokningar."""
 
 import json
@@ -35,7 +35,6 @@ class KallelseProcessor:
         self.smtp_user = config.get("username")
         self.smtp_password = config.get("password")
 
-        # HÄMTA AVSÄNDARNAMN FRÅN CONFIG (Eller fallback)
         self.smtp_sender_name = config.get("smtp_sender_name", "Mail Agent")
 
         self.email_recipients = [
@@ -46,11 +45,14 @@ class KallelseProcessor:
         ]
 
     def process_email(self, sender, subject, body, attachment_paths):
-        """Huvudmetod som anropas från MailAgentScanner."""
+        """
+        Huvudmetod som anropas från MailAgentScanner.
+        Returnerar ai_data (dict) om framgångsrik, annars None.
+        """
 
         if not self.gemini_api_key:
             if self.enable_debug: LOGGER.warning("Ingen API-nyckel för Gemini.")
-            return
+            return None
 
         try:
             # 1. Anropa AI
@@ -82,8 +84,12 @@ class KallelseProcessor:
 
                 self._send_notifications(ai_data, subject, attachment_paths)
 
+            # Returnera data så att sensorn kan uppdateras
+            return ai_data
+
         except Exception as e:
             LOGGER.error("Fel i KallelseProcessor: %s", e)
+            return None
 
     def _call_gemini(self, file_paths, subject, body):
         client = genai.Client(api_key=self.gemini_api_key)
@@ -221,7 +227,6 @@ class KallelseProcessor:
                 except Exception as e:
                     LOGGER.error(f"Kunde inte bifoga fil {file_path}: {e}")
 
-        # HÄR ANVÄNDS DET NYA NAMNET FRÅN INSTÄLLNINGARNA
         msg['From'] = formataddr((self.smtp_sender_name, self.smtp_user))
         msg['To'] = ", ".join(self.email_recipients)
         msg['Subject'] = subject

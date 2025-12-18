@@ -1,8 +1,11 @@
-# Version: 0.16.0 - 2025-12-17
+# Version: 0.18.0 - 2025-12-18
 """Konstanter för Mail Agent."""
 import logging
 
 DOMAIN = "mail_agent"
+
+# Signals
+SIGNAL_MAIL_AGENT_UPDATE = "mail_agent_update"
 
 # Connection
 CONF_IMAP_SERVER = "imap_server"
@@ -14,7 +17,7 @@ CONF_FOLDER = "folder"
 # SMTP
 CONF_SMTP_SERVER = "smtp_server"
 CONF_SMTP_PORT = "smtp_port"
-CONF_SMTP_SENDER_NAME = "smtp_sender_name" # NY KONSTANT
+CONF_SMTP_SENDER_NAME = "smtp_sender_name"
 
 # Options / Logic Type
 CONF_INTERPRETATION_TYPE = "interpretation_type"
@@ -44,6 +47,6 @@ DEFAULT_SCAN_INTERVAL = 60
 DEFAULT_ENABLE_DEBUG = False
 DEFAULT_GEMINI_MODEL = "gemini-3-pro-preview"
 DEFAULT_INTERPRETATION_TYPE = TYPE_KALLELSE
-DEFAULT_SMTP_SENDER_NAME = "Mail Agent" # NY STANDARD
+DEFAULT_SMTP_SENDER_NAME = "Mail Agent"
 
 LOGGER = logging.getLogger(__package__)
