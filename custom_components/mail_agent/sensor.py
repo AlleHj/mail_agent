@@ -1,4 +1,4 @@
-# Fil: custom_components/mail_agent/sensor.py | Version: 0.19.0 | Datum: 2025-12-18
+# Fil: custom_components/mail_agent/sensor.py | Version: 0.18.0 | Datum: 2025-12-18
 """Sensors för Mail Agent med Restore-stöd."""
 from homeassistant.components.sensor import (
     SensorEntity,

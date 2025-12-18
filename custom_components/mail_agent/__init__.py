@@ -1,4 +1,4 @@
-# Version: 0.19.0 - 2025-12-18
+# Version: 0.18.0 - 2025-12-18
 """Mail Agent - Huvudlogik med Global Låsning, Sensorstöd och Restore."""
 
 import imaplib
