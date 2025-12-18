@@ -1,27 +1,29 @@
 Mail Agent för Home Assistant
-Version: 0.76.0
+Version: 0.18.0
 Uppdaterad: 2025-12-18
-Tillåter nu flera instanser.
-
-Version: 0.16.0
-Uppdaterad: 2025-12-17
 
 Mail Agent är en intelligent "Custom Component" för Home Assistant som automatiserar hanteringen av inkommande post. Genom att kombinera Google Gemini (Generativ AI) med traditionell e-posthantering (IMAP/SMTP), fungerar komponenten som en smart sekreterare som läser dina mail, förstår innehållet (inklusive bilagor) och automatiskt bokar in möten i din kalender.
 
-🚀 Huvudfunktioner i v0.16.0
-  🧠 AI-Driven Analys: Använder Google Gemini (gemini-3-pro-preview) för att förstå naturligt språk i mail och bifogade PDF-kallelser.
-  📅 Automatisk Kalenderbokning: Extraherar tid, plats och sammanfattning från ostrukturerad text och skapar händelser i din kalender.
-  🛡️ Trådsäkerhet & Global Låsning: Inbyggd "Scanning Lock" som förhindrar att samma mail bearbetas två gånger.
-  📧 Robust SMTP-motor:
-  Dynamisk Bilagehantering: Skickar endast multipart-mail om bilagor faktiskt finns (eliminerar "spök-bilagor").
-  Anpassat Avsändarnamn: Ställ in ett snyggt namn (t.ex. "Min Sekreterare") för utgående mail.
-  🧩 Modulär Arkitektur: Byggd med "Strategy Pattern". Specifik logik (t.ex. för kallelser) ligger i separata filer, vilket gör systemet redo för framtida expansion (t.ex. fakturor).
+🚀 Nyheter i v0.18.0 (Restore & Stabilitet)
+Denna version fokuserar på dataintegritet och driftstabilitet:
+💾 Restore-funktionalitet: Sensorerna (t.ex. "Emails Processed") nollställs inte längre när du ändrar inställningar eller startar om Home Assistant. De minns sitt senaste värde.
+🛡️ Ökad Stabilitet: Fixar för "Thread Safety" och robustare hantering av IMAP-svar (förhindrar krascher vid oväntade mail-format).
+👁️ Full Insyn: Nya sensorer ger dig kontroll över vad agenten gör i realtid.
 
-📋 Krav
-Home Assistant: Version 2024.x eller senare.
-Google AI Studio API-nyckel: För tillgång till Gemini.
-E-postkonto: IMAP (för att läsa) och SMTP (för att skicka) aktiverat.
-Tips: Använd App-lösenord för Gmail.
+📊 Nya Entiteter
+Integrationen skapar nu följande entiteter för varje konfigurerat konto:
+binary_sensor.mail_agent_scanning: Visar PÅ när agenten aktivt söker efter och bearbetar mail.
+binary_sensor.mail_agent_connected: Visar status för anslutningen till IMAP-servern.
+sensor.mail_agent_last_scan: Tidsstämpel för när inkorgen senast kontrollerades framgångsrikt.
+sensor.mail_agent_last_event_summary: Visar sammanfattningen av det senast hittade eventet (t.ex. "Tandläkartid 14:00").
+sensor.mail_agent_emails_processed: En räknare som visar totalt antal mail agenten har analyserat.
+
+📋 Huvudfunktioner
+🧠 AI-Driven Analys: Använder Google Gemini för att förstå naturligt språk i mail och bifogade PDF-kallelser.
+📅 Automatisk Kalenderbokning: Extraherar tid, plats och sammanfattning och skapar händelser i din kalender.
+🔒 Trådsäkerhet: "Global Scanning Lock" förhindrar att samma mail bearbetas två gånger samtidigt.
+📧 Robust SMTP: Skickar multipart-mail endast vid behov och hanterar bilagor korrekt.
+🎨 Dashboard-ready: Bygg snygga statuspaneler i Lovelace med de nya sensorerna.
 
 🔧 Installation
 Ladda ner mappen mail_agent och placera den i /config/custom_components/.
@@ -29,25 +31,16 @@ Starta om Home Assistant.
 Gå till Inställningar -> Enheter & Tjänster -> Lägg till integration.
 Sök efter "Mail Agent" och följ guiden.
 
-⚙️ Konfiguration
-Allt konfigureras direkt via UI (Config Flow). Inga YAML-filer behövs.
-Anslutning
-IMAP: Server, Port, Användare, Lösenord, Mapp.
-SMTP: Server, Port, Avsändarnamn (Nytt!).
-
-Logik & AI
-Tolkningstyp: Välj vad integrationen ska göra (Just nu: "Tolka kallelse").
-Gemini: API-nyckel och modellnamn.
-Sökintervall: Hur ofta inkorgen ska kollas (sekunder).
-
-Integrationer
-Kalendrar: Välj upp till två kalendrar för bokningar.
-Notifieringar: Välj vilka mobiler och e-postadresser som ska få notiser.
+⚙️ Konfiguration (UI)
+All konfiguration sker via gränssnittet. Inga YAML-filer behövs.
+Anslutning: IMAP/SMTP server, port, användare, lösenord.
+AI: Google Gemini API-nyckel och modellnamn.
+Integrationer: Välj kalendrar och notifieringstjänster.
+Logik: Anpassa sökintervall och debug-nivå.
 
 🛠️ Felsökning
-Dubbla notiser? Kontrollera att du kör v0.15.1+ som har Global Låsning.
-Import-fel på google.genai? Starta om Home Assistant helt för att ladda in nya bibliotek.
-Inga mail hittas? Kontrollera att mailen är markerade som Olästa (Unseen).
+Sensorerna visar "Unknown"? Vänta till nästa sökintervall eller tvinga en omladdning av integrationen, så kommer de igång.
+Inga mail hittas? Kontrollera att mailen är markerade som Olästa (Unseen) i din inkorg.
 
 📄 Licens
-Detta projekt är utvecklat som en anpassad integration för personligt bruk (Open Source).
+Open Source för personligt bruk.
