@@ -1,4 +1,8 @@
 Mail Agent för Home Assistant
+Version: 0.76.0
+Uppdaterad: 2025-12-18
+Tillåter nu flera instanser.
+
 Version: 0.16.0
 Uppdaterad: 2025-12-17
 
