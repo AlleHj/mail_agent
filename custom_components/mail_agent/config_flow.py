@@ -1,4 +1,4 @@
-# Version: 0.16.0 - 2025-12-17
+# Fil: custom_components/mail_agent/config_flow.py | Version: 0.17.0 | Datum: 2025-12-18
 """Config flow för Mail Agent integration."""
 
 import imaplib
@@ -29,7 +29,7 @@ from .const import (
     CONF_FOLDER,
     CONF_SMTP_SERVER,
     CONF_SMTP_PORT,
-    CONF_SMTP_SENDER_NAME, # Ny
+    CONF_SMTP_SENDER_NAME,
     CONF_SCAN_INTERVAL,
     CONF_ENABLE_DEBUG,
     CONF_GEMINI_API_KEY,
@@ -49,7 +49,7 @@ from .const import (
     DEFAULT_ENABLE_DEBUG,
     DEFAULT_GEMINI_MODEL,
     DEFAULT_INTERPRETATION_TYPE,
-    DEFAULT_SMTP_SENDER_NAME, # Ny
+    DEFAULT_SMTP_SENDER_NAME,
 )
 
 async def validate_input(hass: HomeAssistant, data: dict) -> dict:
@@ -58,7 +58,10 @@ async def validate_input(hass: HomeAssistant, data: dict) -> dict:
         try:
             connection = imaplib.IMAP4_SSL(data[CONF_IMAP_SERVER], data[CONF_IMAP_PORT])
             connection.login(data[CONF_USERNAME], data[CONF_PASSWORD])
-            connection.select(data[CONF_FOLDER])
+            # Verifiera att mappen faktiskt finns
+            typ, _ = connection.select(data[CONF_FOLDER])
+            if typ != 'OK':
+                raise ValueError(f"Mappen {data[CONF_FOLDER]} finns inte.")
             connection.logout()
             return True
         except imaplib.IMAP4.error:
@@ -68,7 +71,8 @@ async def validate_input(hass: HomeAssistant, data: dict) -> dict:
             raise ConnectionError("cannot_connect")
 
     await hass.async_add_executor_job(_test_imap_login)
-    return {"title": data[CONF_USERNAME]}
+    # Returnera en titel som hjälper dig skilja dem åt i listan, men inget unikt ID krävs.
+    return {"title": f"{data[CONF_USERNAME]} ({data[CONF_FOLDER]})"}
 
 
 class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -84,6 +88,7 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input=None) -> ConfigFlowResult:
         errors = {}
 
+        # Hämta tillgängliga notifieringstjänster
         notify_services = []
         services = self.hass.services.async_services()
         if "notify" in services:
@@ -93,9 +98,11 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
+                # 1. Validera anslutning
                 info = await validate_input(self.hass, user_input)
-                await self.async_set_unique_id(user_input[CONF_USERNAME])
-                self._abort_if_unique_id_configured()
+
+                # NOTERING: Vi sätter INGET unikt ID här.
+                # Detta tillåter obegränsat antal instanser med exakt samma inställningar.
 
                 data_config = {
                     CONF_IMAP_SERVER: user_input[CONF_IMAP_SERVER],
@@ -108,7 +115,7 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
                 options_config = {
                     CONF_SMTP_SERVER: user_input.get(CONF_SMTP_SERVER),
                     CONF_SMTP_PORT: user_input.get(CONF_SMTP_PORT),
-                    CONF_SMTP_SENDER_NAME: user_input.get(CONF_SMTP_SENDER_NAME), # Ny
+                    CONF_SMTP_SENDER_NAME: user_input.get(CONF_SMTP_SENDER_NAME),
                     CONF_INTERPRETATION_TYPE: user_input.get(CONF_INTERPRETATION_TYPE),
                     CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL),
                     CONF_ENABLE_DEBUG: user_input.get(CONF_ENABLE_DEBUG),
@@ -127,6 +134,7 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
                     data=data_config,
                     options=options_config
                 )
+
             except ValueError:
                 errors["base"] = "invalid_auth"
             except ConnectionError:
@@ -135,6 +143,7 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
                 LOGGER.exception("Oväntat fel")
                 errors["base"] = "unknown"
 
+        # Definition av Selectors för UI
         notify_selector = SelectSelector(
             SelectSelectorConfig(
                 options=notify_services,
@@ -157,6 +166,7 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
             )
         )
 
+        # Formulärschema
         schema = vol.Schema({
             # IMAP
             vol.Required(CONF_IMAP_SERVER): str,
@@ -168,7 +178,6 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
             # SMTP
             vol.Optional(CONF_SMTP_SERVER): str,
             vol.Optional(CONF_SMTP_PORT, default=DEFAULT_SMTP_PORT): int,
-            # NYTT FÄLT FÖR AVSÄNDARNAMN
             vol.Optional(CONF_SMTP_SENDER_NAME, default=DEFAULT_SMTP_SENDER_NAME): str,
 
             # Logic Type
@@ -195,6 +204,7 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
 class MailAgentOptionsFlowHandler(OptionsFlow):
     async def async_step_init(self, user_input=None) -> ConfigFlowResult:
         if user_input is not None:
+            # Uppdatera config entry med nya data
             connection_data = {
                 CONF_IMAP_SERVER: user_input[CONF_IMAP_SERVER],
                 CONF_IMAP_PORT: user_input[CONF_IMAP_PORT],
@@ -205,7 +215,7 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
             options_data = {
                 CONF_SMTP_SERVER: user_input.get(CONF_SMTP_SERVER),
                 CONF_SMTP_PORT: user_input.get(CONF_SMTP_PORT),
-                CONF_SMTP_SENDER_NAME: user_input.get(CONF_SMTP_SENDER_NAME), # Ny
+                CONF_SMTP_SENDER_NAME: user_input.get(CONF_SMTP_SENDER_NAME),
                 CONF_INTERPRETATION_TYPE: user_input.get(CONF_INTERPRETATION_TYPE),
                 CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL),
                 CONF_ENABLE_DEBUG: user_input.get(CONF_ENABLE_DEBUG),
@@ -225,6 +235,7 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
         config = self.config_entry.data
         options = self.config_entry.options
 
+        # Bygg upp listor för options-flödet
         notify_services = []
         services = self.hass.services.async_services()
         if "notify" in services:
@@ -263,7 +274,6 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
 
             vol.Optional(CONF_SMTP_SERVER, description={"suggested_value": options.get(CONF_SMTP_SERVER, "")}): str,
             vol.Optional(CONF_SMTP_PORT, default=options.get(CONF_SMTP_PORT, DEFAULT_SMTP_PORT)): int,
-            # NYTT FÄLT FÖR OPTIONS
             vol.Optional(CONF_SMTP_SENDER_NAME, default=options.get(CONF_SMTP_SENDER_NAME, DEFAULT_SMTP_SENDER_NAME)): str,
 
             vol.Optional(CONF_INTERPRETATION_TYPE, default=options.get(CONF_INTERPRETATION_TYPE, DEFAULT_INTERPRETATION_TYPE)): type_selector,
