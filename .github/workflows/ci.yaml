@@ -1,0 +1,101 @@
+name: CI (Test Current & Next)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+env:
+  COMPONENT: mail_agent
+
+jobs:
+  validate:
+    name: Validate & Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Hassfest Validation
+        uses: home-assistant/actions/hassfest@master
+      - name: HACS Validation
+        uses: hacs/action@main
+        with:
+          category: integration
+          ignore: brands
+      - name: Get current version
+        id: version
+        run: |
+          MANIFEST="custom_components/${{ env.COMPONENT }}/manifest.json"
+          VERSION=$(jq -r '.version' $MANIFEST)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      - name: Create Zip File
+        run: |
+          cd custom_components
+          zip -r "../${{ env.COMPONENT }}_${{ steps.version.outputs.version }}.zip" "${{ env.COMPONENT }}" -x "*/__pycache__/*"
+
+  lint:
+    name: Lint Code (Ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Ruff
+        run: pip install ruff
+      - name: Run Ruff
+        run: ruff check .
+
+  test-current:
+    name: Test Current (Stable)
+    runs-on: ubuntu-latest
+    needs: [validate, lint]
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies (Stable)
+        run: |
+          pip install pytest pytest-homeassistant-custom-component
+          if [ -f requirements_test.txt ]; then pip install -r requirements_test.txt; fi
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Run Tests
+        run: |
+          if [ -d "tests" ]; then pytest tests; else echo "No tests folder found - skipping"; fi
+
+  test-next:
+    name: Test Next (Dev/Future)
+    runs-on: ubuntu-latest
+    needs: [validate, lint]
+    # PUSH-LÄGE: Tillåt fel (Gult) så vi inte stoppar en release pga framtida buggar
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python (Latest)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies (Dev/Nightly)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpcap-dev
+          pip install pytest pytest-homeassistant-custom-component
+          if [ -f requirements_test.txt ]; then pip install -r requirements_test.txt; fi
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          echo "⚠️ Installing Home Assistant Dev/Nightly..."
+          pip install git+https://github.com/home-assistant/core.git@dev --upgrade --force-reinstall
+      - name: Run Tests
+        run: |
+          if [ -d "tests" ]; then pytest tests; else echo "No tests folder found - skipping"; fi

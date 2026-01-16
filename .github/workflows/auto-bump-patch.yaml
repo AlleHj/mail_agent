@@ -1,0 +1,70 @@
+name: Auto Bump Patch (z++)
+
+on:
+  workflow_dispatch:      # Gör att du kan starta manuellt och se den i listan
+  push:
+    branches: ["main"]
+    paths:
+      - 'custom_components/**'
+
+permissions:
+  contents: write
+
+jobs:
+  bump-patch:
+    # Kör inte om meddelandet innehåller 'skip-bump', 'Release', eller '[skip ci]'
+    if: "!contains(github.event.head_commit.message, 'skip-bump') && !contains(github.event.head_commit.message, 'Release') && !contains(github.event.head_commit.message, 'skip ci')"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0 # Viktigt för att kunna pusha tillbaka
+
+      - name: Bump Patch Version
+        id: bump
+        run: |
+          # MAGI: Hitta manifestet automatiskt oavsett vad mappen heter
+          MANIFEST=$(find custom_components -name manifest.json | head -n 1)
+          
+          if [ -z "$MANIFEST" ]; then
+            echo "Error: Could not find manifest.json in custom_components/"
+            exit 1
+          fi
+          
+          echo "Found manifest at: $MANIFEST"
+
+          CURRENT_VERSION=$(jq -r '.version' $MANIFEST)
+          IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
+          NEW_PATCH=$((patch + 1))
+          NEW_VERSION="$major.$minor.$NEW_PATCH"
+          
+          # Uppdatera versionsnumret i manifest.json
+          jq --arg v "$NEW_VERSION" '.version = $v' $MANIFEST > tmp.json && mv tmp.json $MANIFEST
+          
+          # Uppdatera README om den finns (Smarter Regex som behåller färgen)
+          # Förklaring:
+          # \1 = "version-"
+          # \2 = "-blue.svg" (eller vilken färg som helst + .svg)
+          if [ -f README.md ]; then
+            sed -i -E "s/(version-)$CURRENT_VERSION(-[a-zA-Z]+\.svg)/\1$NEW_VERSION\2/g" README.md
+          fi
+          
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "Version Bot"
+          git config --global user.email "bot@noreply.github.com"
+          
+          git add .
+          
+          # Kolla om det finns något att committa
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            # VIKTIGT: Vi lägger till [skip ci] här så att bumpen inte triggar en ny loop av tester
+            git commit -m "chore: bump version to ${{ steps.bump.outputs.version }} [skip ci]"
+            git push
+          fi

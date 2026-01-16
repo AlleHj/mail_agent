@@ -1,0 +1,73 @@
+name: Create Release (Special)
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to release from'
+        required: true
+        default: 'main'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - name: Bump Minor Version (y++)
+        id: bump
+        run: |
+          # MAGI: Hitta manifestet automatiskt
+          MANIFEST=$(find custom_components -name manifest.json | head -n 1)
+          
+          if [ -z "$MANIFEST" ]; then
+             echo "Error: Manifest not found"
+             exit 1
+          fi
+
+          CURRENT_VERSION=$(jq -r '.version' $MANIFEST)
+          IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
+          NEW_MINOR=$((minor + 1))
+          NEW_VERSION="$major.$NEW_MINOR.0"
+          
+          echo "New Version: $NEW_VERSION"
+          
+          jq --arg v "$NEW_VERSION" '.version = $v' $MANIFEST > tmp.json && mv tmp.json $MANIFEST
+          
+          if [ -f README.md ]; then
+            sed -i "s/version-$CURRENT_VERSION-blue.svg/version-$NEW_VERSION-blue.svg/g" README.md
+          fi
+          
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Commit Bump
+        run: |
+          git config --global user.name "Release Bot"
+          git config --global user.email "bot@noreply.github.com"
+          git add .
+          git commit -m "Release ${{ steps.bump.outputs.version }}"
+          git push
+
+      - name: Create Zip
+        run: |
+          cd custom_components
+          # Hitta mappnamnet automatiskt
+          DIR_NAME=$(ls -d */ | head -n 1 | tr -d /)
+          
+          zip -r "../${DIR_NAME}_${{ steps.bump.outputs.version }}.zip" "$DIR_NAME" -x "*/__pycache__/*"
+          echo "ZIP_NAME=${DIR_NAME}_${{ steps.bump.outputs.version }}.zip" >> $GITHUB_ENV
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.bump.outputs.version }}
+          name: Release ${{ steps.bump.outputs.version }}
+          files: ${{ env.ZIP_NAME }}
+          draft: false
+          prerelease: false
