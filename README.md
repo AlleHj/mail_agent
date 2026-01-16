@@ -1,3 +1,6 @@
+![Version](https://img.shields.io/badge/version-0.18.0-blue.svg)
+![Home Assistant](https://img.shields.io/badge/home%20assistant-component-orange.svg)
+
 Mail Agent för Home Assistant
 Version: 0.18.0
 Uppdaterad: 2025-12-18
