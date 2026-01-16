@@ -71,10 +71,7 @@ jobs:
           if [ -f requirements_test.txt ]; then pip install -r requirements_test.txt; fi
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
       - name: Run Tests
-        run: |
-          TEST_DIR="tests"
-          if [ ! -d "$TEST_DIR" ]; then TEST_DIR="custom_components/${{ env.COMPONENT }}/tests"; fi
-          if [ -d "$TEST_DIR" ]; then pytest "$TEST_DIR"; else echo "No tests folder found - skipping"; fi
+        run: pytest
 
   test-next:
     name: Test Next (Dev/Future)
@@ -97,8 +94,4 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install git+https://github.com/home-assistant/core.git@dev --upgrade --force-reinstall
       - name: Run Tests
-        run: |
-          # Även här letar vi nu i undermappen!
-          TEST_DIR="tests"
-          if [ ! -d "$TEST_DIR" ]; then TEST_DIR="custom_components/${{ env.COMPONENT }}/tests"; fi
-          if [ -d "$TEST_DIR" ]; then pytest "$TEST_DIR"; else echo "No tests folder found - skipping"; fi
+        run: pytest
