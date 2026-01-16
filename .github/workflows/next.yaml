@@ -70,8 +70,14 @@ jobs:
 
       - name: Run Tests
         run: |
-          if [ -d "tests" ]; then
-            pytest tests
+          # Letar efter tests-mappen i roten ELLER inuti komponenten
+          TEST_DIR="tests"
+          if [ ! -d "$TEST_DIR" ]; then
+            TEST_DIR="custom_components/${{ env.COMPONENT }}/tests"
+          fi
+
+          if [ -d "$TEST_DIR" ]; then
+            pytest "$TEST_DIR"
           else
-            echo "No tests folder found - skipping"
+            echo "No tests folder found at root or in component - skipping"
           fi
