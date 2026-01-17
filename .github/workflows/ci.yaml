@@ -17,23 +17,37 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      
       - name: Hassfest Validation
         uses: home-assistant/actions/hassfest@master
+      
       - name: HACS Validation
         uses: hacs/action@main
         with:
           category: integration
           ignore: brands
+      
       - name: Get current version
         id: version
         run: |
           MANIFEST="custom_components/${{ env.COMPONENT }}/manifest.json"
           VERSION=$(jq -r '.version' $MANIFEST)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+      
       - name: Create Zip File
         run: |
           cd custom_components
+          # Zippa mappen och lägg den i roten (../)
           zip -r "../${{ env.COMPONENT }}_${{ steps.version.outputs.version }}.zip" "${{ env.COMPONENT }}" -x "*/__pycache__/*"
+
+      # --- HÄR ÄR TILLÄGGET: Ladda upp filen ---
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.COMPONENT }}_${{ steps.version.outputs.version }}
+          path: ${{ env.COMPONENT }}_${{ steps.version.outputs.version }}.zip
+          if-no-files-found: error
+          retention-days: 7 # Sparar filen i 7 dagar
 
   lint:
     name: Lint Code (Ruff)
@@ -47,8 +61,9 @@ jobs:
           python-version: "3.12"
       - name: Install Ruff
         run: pip install ruff
+      # --format=github gör att varningar syns snyggt i "Files Changed" fliken på en PR
       - name: Run Ruff
-        run: ruff check .
+        run: ruff check . --output-format=github
 
   test-current:
     name: Test Current (Stable)
@@ -72,21 +87,14 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
       - name: Run Tests
         run: |
-          # 1. Kolla om mappen 'tests' finns i roten (standard)
           if [ -d "tests" ]; then
-            echo "✅ Hittade tester i roten. Kör..."
             pytest tests
             exit 0
           fi
-
-          # 2. Kolla om mappen finns inuti komponenten (HACS-struktur)
           if [ -d "custom_components/${{ env.COMPONENT }}/tests" ]; then
-            echo "✅ Hittade tester i komponenten. Kör..."
             pytest "custom_components/${{ env.COMPONENT }}/tests"
             exit 0
           fi
-
-          # 3. Om inget hittas: Var glad ändå!
           echo "⚠️ Inga tester hittades. Hoppar över test-steget."
           exit 0
 
@@ -112,20 +120,13 @@ jobs:
           pip install git+https://github.com/home-assistant/core.git@dev --upgrade --force-reinstall
       - name: Run Tests
         run: |
-          # 1. Kolla om mappen 'tests' finns i roten (standard)
           if [ -d "tests" ]; then
-            echo "✅ Hittade tester i roten. Kör..."
             pytest tests
             exit 0
           fi
-
-          # 2. Kolla om mappen finns inuti komponenten (HACS-struktur)
           if [ -d "custom_components/${{ env.COMPONENT }}/tests" ]; then
-            echo "✅ Hittade tester i komponenten. Kör..."
             pytest "custom_components/${{ env.COMPONENT }}/tests"
             exit 0
           fi
-
-          # 3. Om inget hittas: Var glad ändå!
           echo "⚠️ Inga tester hittades. Hoppar över test-steget."
           exit 0
