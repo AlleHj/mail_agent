@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.branch }}
-          token: ${{ secrets.PAT_TOKEN }} # <--- VIKTIGT: Detta ger Admin-behörighet att pusha till main
+          token: ${{ secrets.GITHUB_TOKEN }} # <--- VIKTIGT: Detta ger Admin-behörighet att pusha till main
           fetch-depth: 0
 
       - name: Bump Minor Version (y++)
@@ -73,4 +73,4 @@ jobs:
           files: ${{ env.ZIP_NAME }}
           draft: false
           prerelease: false
-          token: ${{ secrets.PAT_TOKEN }} # Bra att ha här också för att skapa releasen som Admin
+          token: ${{ secrets.GITHUB_TOKEN }} # Bra att ha här också för att skapa releasen som Admin
