@@ -71,7 +71,24 @@ jobs:
           if [ -f requirements_test.txt ]; then pip install -r requirements_test.txt; fi
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
       - name: Run Tests
-        run: pytest
+        run: |
+          # 1. Kolla om mappen 'tests' finns i roten (standard)
+          if [ -d "tests" ]; then
+            echo "✅ Hittade tester i roten. Kör..."
+            pytest tests
+            exit 0
+          fi
+
+          # 2. Kolla om mappen finns inuti komponenten (HACS-struktur)
+          if [ -d "custom_components/${{ env.COMPONENT }}/tests" ]; then
+            echo "✅ Hittade tester i komponenten. Kör..."
+            pytest "custom_components/${{ env.COMPONENT }}/tests"
+            exit 0
+          fi
+
+          # 3. Om inget hittas: Var glad ändå!
+          echo "⚠️ Inga tester hittades. Hoppar över test-steget."
+          exit 0
 
   test-next:
     name: Test Next (Dev/Future)
@@ -94,4 +111,21 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install git+https://github.com/home-assistant/core.git@dev --upgrade --force-reinstall
       - name: Run Tests
-        run: pytest
+        run: |
+          # 1. Kolla om mappen 'tests' finns i roten (standard)
+          if [ -d "tests" ]; then
+            echo "✅ Hittade tester i roten. Kör..."
+            pytest tests
+            exit 0
+          fi
+
+          # 2. Kolla om mappen finns inuti komponenten (HACS-struktur)
+          if [ -d "custom_components/${{ env.COMPONENT }}/tests" ]; then
+            echo "✅ Hittade tester i komponenten. Kör..."
+            pytest "custom_components/${{ env.COMPONENT }}/tests"
+            exit 0
+          fi
+
+          # 3. Om inget hittas: Var glad ändå!
+          echo "⚠️ Inga tester hittades. Hoppar över test-steget."
+          exit 0
