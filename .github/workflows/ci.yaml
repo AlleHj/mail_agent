@@ -1,4 +1,4 @@
-name: CI (Test Current & Test Next)
+name: CI (Test Current & Next)
 
 on:
   push:
