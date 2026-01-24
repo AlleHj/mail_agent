@@ -4,8 +4,8 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorDeviceClass,
     SensorStateClass,
-    RestoreSensor, # VIKTIG IMPORT
 )
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.util import dt as dt_util
@@ -53,7 +53,7 @@ class MailAgentBaseSensor(SensorEntity):
         self.async_write_ha_state()
 
 
-class MailAgentLastScanSensor(MailAgentBaseSensor, RestoreSensor):
+class MailAgentLastScanSensor(MailAgentBaseSensor, RestoreEntity):
     """Visar när senaste lyckade sökning gjordes."""
 
     _attr_device_class = SensorDeviceClass.TIMESTAMP
@@ -77,11 +77,11 @@ class MailAgentLastScanSensor(MailAgentBaseSensor, RestoreSensor):
                 dt_val = dt_util.parse_datetime(str(last_state.native_value))
                 if dt_val:
                     self._scanner.restore_last_scan(dt_val)
-            except:
+            except Exception:
                 pass
 
 
-class MailAgentProcessedSensor(MailAgentBaseSensor, RestoreSensor):
+class MailAgentProcessedSensor(MailAgentBaseSensor, RestoreEntity):
     """Räknare för antal mail."""
 
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
@@ -108,7 +108,7 @@ class MailAgentProcessedSensor(MailAgentBaseSensor, RestoreSensor):
                 pass
 
 
-class MailAgentLastEventSensor(MailAgentBaseSensor, RestoreSensor):
+class MailAgentLastEventSensor(MailAgentBaseSensor, RestoreEntity):
     """Visar info om senaste händelsen."""
 
     _attr_name = "Last Event Summary"
