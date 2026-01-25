@@ -5,7 +5,7 @@ import imaplib
 import email
 from email.header import decode_header
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -154,13 +154,13 @@ class MailAgentScanner:
             return
 
         self._is_scanning = True
-        self.hass.add_job(self._notify_update) # Uppdatera binary_sensor.scanning till On
+        self._notify_update()  # Uppdatera binary_sensor.scanning till On
 
         try:
             await self.hass.async_add_executor_job(self._check_mail_sync)
         finally:
             self._is_scanning = False
-            self.hass.add_job(self._notify_update) # Uppdatera binary_sensor.scanning till Off
+            self._notify_update()  # Uppdatera binary_sensor.scanning till Off
 
     @callback
     def _notify_update(self):
@@ -260,13 +260,16 @@ class MailAgentScanner:
         saved_paths = []
         if msg.is_multipart():
             for part in msg.walk():
-                if part.get_content_maintype() == 'multipart': continue
+                if part.get_content_maintype() == 'multipart':
+                    continue
                 filename = part.get_filename()
-                if not filename: continue
+                if not filename:
+                    continue
                 if "pdf" in part.get_content_type():
                     filename = "".join(c for c in filename if c.isalnum() or c in "._- ")
                     filepath = self.storage_dir / filename
-                    with open(filepath, "wb") as f: f.write(part.get_payload(decode=True))
+                    with open(filepath, "wb") as f:
+                        f.write(part.get_payload(decode=True))
                     saved_paths.append(filepath)
         return saved_paths
 
@@ -275,15 +278,22 @@ class MailAgentScanner:
         if msg.is_multipart():
             for part in msg.walk():
                 if part.get_content_type() == "text/plain":
-                    try: body = part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", errors="replace"); break
-                    except: pass
+                    try:
+                        body = part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", errors="replace")
+                        break
+                    except Exception:
+                        pass
         else:
-            try: body = msg.get_payload(decode=True).decode(msg.get_content_charset() or "utf-8", errors="replace")
-            except: pass
+            try:
+                body = msg.get_payload(decode=True).decode(msg.get_content_charset() or "utf-8", errors="replace")
+            except Exception:
+                pass
         return body.strip()
 
     def _decode_subject(self, encoded_subject):
-        if not encoded_subject: return "Okänt ämne"
+        if not encoded_subject:
+            return "Okänt ämne"
         subject, encoding = decode_header(encoded_subject)[0]
-        if isinstance(subject, bytes): return subject.decode(encoding if encoding else "utf-8")
+        if isinstance(subject, bytes):
+            return subject.decode(encoding if encoding else "utf-8")
         return subject

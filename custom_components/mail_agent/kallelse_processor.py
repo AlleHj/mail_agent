@@ -13,7 +13,6 @@ from email import encoders
 from email.utils import formataddr
 
 from google import genai
-from google.genai import types
 
 from homeassistant.util import dt as dt_util
 from .const import LOGGER
@@ -51,7 +50,8 @@ class KallelseProcessor:
         """
 
         if not self.gemini_api_key:
-            if self.enable_debug: LOGGER.warning("Ingen API-nyckel för Gemini.")
+            if self.enable_debug:
+                LOGGER.warning("Ingen API-nyckel för Gemini.")
             return None
 
         try:
@@ -97,13 +97,15 @@ class KallelseProcessor:
         for path in file_paths:
             uploaded_files.append(client.files.upload(file=path, config={'mime_type': 'application/pdf'}))
 
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
+        now_str = dt_util.now().strftime('%Y-%m-%d %H:%M')
 
         prompt = f"""
         Du är en smart kalender-assistent.
         Idag är det: {now_str}
 
         Din uppgift är att hitta bokningar, kallelser eller möten i detta mail/bilaga.
+
+        OM DET FINNS BILAGOR: Föreslå ett kort, beskrivande filnamn (slutar på .pdf) baserat på innehållet (t.ex. "Tandläkare_2025-05-10.pdf").
 
         Regler för datum och tid:
         1. Utgå ALLTID från dagens datum ({now_str}) vid relativa uttryck.
@@ -120,7 +122,8 @@ class KallelseProcessor:
             "description": "Sammanfattning av detaljer",
             "start_time": "YYYY-MM-DD HH:MM:SS (eller null)",
             "location": "Plats",
-            "type": "Typ"
+            "type": "Typ",
+            "suggested_filename": "Nytt_Filnamn.pdf"
         }}
         """
 
@@ -130,14 +133,17 @@ class KallelseProcessor:
         )
 
         for f in uploaded_files:
-            try: client.files.delete(name=f.name)
-            except: pass
+            try:
+                client.files.delete(name=f.name)
+            except Exception:
+                pass
 
         return json.loads(response.text)
 
     def _create_calendar_events(self, ai_data):
         calendars = [c for c in [self.cal1, self.cal2] if c]
-        if not calendars: return
+        if not calendars:
+            return
 
         start_str = ai_data.get("start_time")
         try:
@@ -151,7 +157,8 @@ class KallelseProcessor:
         location = ai_data.get("location", "")
 
         for calendar_entity in calendars:
-            if self.enable_debug: LOGGER.info(f"Bokar i {calendar_entity}")
+            if self.enable_debug:
+                LOGGER.info(f"Bokar i {calendar_entity}")
             self.hass.add_job(
                 self.hass.services.async_call(
                     "calendar", "create_event",
@@ -171,6 +178,7 @@ class KallelseProcessor:
         start_time = ai_data.get("start_time", "okänd tid")
         location = ai_data.get("location", "")
         description = ai_data.get("description", "")
+        suggested_filename = ai_data.get("suggested_filename")
 
         if self.notify_services:
             mobile_message = f"Ny bokning: {summary}\nTid: {start_time}"
@@ -200,11 +208,11 @@ class KallelseProcessor:
             <p><small>Originalämne: {original_subject}</small></p>
             """
             try:
-                self._send_smtp_email(f"Ny kallelse: {summary}", email_body, attachment_paths)
+                self._send_smtp_email(f"Ny kallelse: {summary}", email_body, attachment_paths, suggested_filename)
             except Exception as e:
                 LOGGER.error(f"Kunde inte skicka SMTP-mail: {e}")
 
-    def _send_smtp_email(self, subject, html_body, files):
+    def _send_smtp_email(self, subject, html_body, files, suggested_filename=None):
         if not files:
             msg = MIMEText(html_body, 'html')
         else:
@@ -222,7 +230,13 @@ class KallelseProcessor:
                     part = MIMEBase(maintype, subtype)
                     part.set_payload(file_data)
                     encoders.encode_base64(part)
-                    part.add_header('Content-Disposition', f'attachment; filename="{path.name}"')
+
+                    if suggested_filename and len(files) == 1:
+                        filename = suggested_filename
+                    else:
+                        filename = path.name
+
+                    part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
                     msg.attach(part)
                 except Exception as e:
                     LOGGER.error(f"Kunde inte bifoga fil {file_path}: {e}")
@@ -240,4 +254,5 @@ class KallelseProcessor:
         server.login(self.smtp_user, self.smtp_password)
         server.sendmail(self.smtp_user, self.email_recipients, msg.as_string())
         server.quit()
-        if self.enable_debug: LOGGER.info("SMTP mail skickat framgångsrikt (Kallelse).")
+        if self.enable_debug:
+            LOGGER.info("SMTP mail skickat framgångsrikt (Kallelse).")
