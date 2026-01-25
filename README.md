@@ -1,17 +1,17 @@
-![Version](https://img.shields.io/badge/version-0.18.0-blue.svg)
+![Version](https://img.shields.io/badge/version-0.19.0-blue.svg)
 ![Home Assistant](https://img.shields.io/badge/home%20assistant-component-orange.svg)
 
 Mail Agent för Home Assistant
-Version: 0.18.0
-Uppdaterad: 2025-12-18
+Version: 0.19.0
+Uppdaterad: 2026-01-25
 
 Mail Agent är en intelligent "Custom Component" för Home Assistant som automatiserar hanteringen av inkommande post. Genom att kombinera Google Gemini (Generativ AI) med traditionell e-posthantering (IMAP/SMTP), fungerar komponenten som en smart sekreterare som läser dina mail, förstår innehållet (inklusive bilagor) och automatiskt bokar in möten i din kalender.
 
-🚀 Nyheter i v0.18.0 (Restore & Stabilitet)
-Denna version fokuserar på dataintegritet och driftstabilitet:
-💾 Restore-funktionalitet: Sensorerna (t.ex. "Emails Processed") nollställs inte längre när du ändrar inställningar eller startar om Home Assistant. De minns sitt senaste värde.
-🛡️ Ökad Stabilitet: Fixar för "Thread Safety" och robustare hantering av IMAP-svar (förhindrar krascher vid oväntade mail-format).
-👁️ Full Insyn: Nya sensorer ger dig kontroll över vad agenten gör i realtid.
+🚀 Nyheter i v0.19.0 (AI & Kompatibilitet)
+Denna version introducerar smartare filhantering och framtidssäkrar integrationen:
+📎 AI-Namngivning: Agenten analyserar nu innehållet i bifogade PDF:er och döper om dem till något logiskt (t.ex. "Tandläkare_2025-05-10.pdf") innan de skickas vidare.
+🏗️ HA 2025.1+ Kompatibilitet: Uppdaterad kodbas för att fungera med kommande Home Assistant-versioner (fixat RestoreEntity och async-hantering).
+🧹 Renare Kod: Omfattande genomgång och uppstädning av koden (Ruff-linting) för ökad kvalitet och färre varningar i loggen.
 
 📊 Nya Entiteter
 Integrationen skapar nu följande entiteter för varje konfigurerat konto:

@@ -4,8 +4,8 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorDeviceClass,
     SensorStateClass,
-    RestoreSensor, # VIKTIG IMPORT
 )
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.util import dt as dt_util
@@ -53,7 +53,7 @@ class MailAgentBaseSensor(SensorEntity):
         self.async_write_ha_state()
 
 
-class MailAgentLastScanSensor(MailAgentBaseSensor, RestoreSensor):
+class MailAgentLastScanSensor(MailAgentBaseSensor, RestoreEntity):
     """Visar när senaste lyckade sökning gjordes."""
 
     _attr_device_class = SensorDeviceClass.TIMESTAMP
@@ -69,19 +69,19 @@ class MailAgentLastScanSensor(MailAgentBaseSensor, RestoreSensor):
 
     async def async_added_to_hass(self):
         """Återställ senaste värde vid omstart."""
-        await super().async_added_to_hass() # Viktigt för både BaseSensor och RestoreSensor
-        last_state = await self.async_get_last_sensor_data()
-        if last_state and last_state.native_value:
+        await super().async_added_to_hass()  # Viktigt för både BaseSensor och RestoreEntity
+        last_state = await self.async_get_last_state()
+        if last_state and last_state.state not in ("unknown", "unavailable"):
             # Försök parsa datumsträngen tillbaka till datetime
             try:
-                dt_val = dt_util.parse_datetime(str(last_state.native_value))
+                dt_val = dt_util.parse_datetime(last_state.state)
                 if dt_val:
                     self._scanner.restore_last_scan(dt_val)
-            except:
+            except Exception:
                 pass
 
 
-class MailAgentProcessedSensor(MailAgentBaseSensor, RestoreSensor):
+class MailAgentProcessedSensor(MailAgentBaseSensor, RestoreEntity):
     """Räknare för antal mail."""
 
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
@@ -99,16 +99,16 @@ class MailAgentProcessedSensor(MailAgentBaseSensor, RestoreSensor):
     async def async_added_to_hass(self):
         """Återställ senaste värde vid omstart."""
         await super().async_added_to_hass()
-        last_state = await self.async_get_last_sensor_data()
-        if last_state and last_state.native_value:
+        last_state = await self.async_get_last_state()
+        if last_state and last_state.state not in ("unknown", "unavailable"):
             try:
-                val = int(last_state.native_value)
+                val = int(last_state.state)
                 self._scanner.restore_email_count(val)
             except ValueError:
                 pass
 
 
-class MailAgentLastEventSensor(MailAgentBaseSensor, RestoreSensor):
+class MailAgentLastEventSensor(MailAgentBaseSensor, RestoreEntity):
     """Visar info om senaste händelsen."""
 
     _attr_name = "Last Event Summary"
@@ -125,6 +125,6 @@ class MailAgentLastEventSensor(MailAgentBaseSensor, RestoreSensor):
     async def async_added_to_hass(self):
         """Återställ senaste värde vid omstart."""
         await super().async_added_to_hass()
-        last_state = await self.async_get_last_sensor_data()
-        if last_state and last_state.native_value:
-            self._scanner.restore_last_event(str(last_state.native_value))
+        last_state = await self.async_get_last_state()
+        if last_state and last_state.state not in ("unknown", "unavailable"):
+            self._scanner.restore_last_event(last_state.state)
