@@ -1,11 +1,15 @@
 {
   "domain": "mail_agent",
   "name": "Mail Agent",
-  "codeowners": ["@AlleHj"],
+  "codeowners": [
+    "@AlleHj"
+  ],
   "config_flow": true,
   "documentation": "https://www.hjalmar.com",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://www.hjalmar.com/issues",
-  "requirements": ["google-genai"],
-  "version": "0.18.0"
+  "requirements": [
+    "google-genai"
+  ],
+  "version": "0.18.1"
 }
