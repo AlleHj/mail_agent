@@ -1,0 +1,118 @@
+name: Create Repos
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_name:
+        description: 'Repo Name (e.g., my_sensor)'
+        required: true
+        type: string
+      integration_name:
+        description: 'Integration Name (e.g., My Sensor)'
+        required: true
+        type: string
+
+jobs:
+  create-and-scaffold:
+    runs-on: ubuntu-latest
+    steps:
+      # Steg 1: Checka ut nuvarande repo för att komma åt templates och repos.json
+      - name: Checka ut nuvarande repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN }} # Krävs för att kunna pusha tillbaka repos.json senare
+
+      # Steg 2: Konfigurera Git-användare för bottens commits
+      - name: Konfigurera Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      # Steg 3: Skapa nytt repository via GitHub CLI
+      - name: Skapa nytt repository
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO_NAME_INPUT: ${{ inputs.repo_name }}
+        run: |
+          # Skapar repot publikt och klonar det direkt
+          # gh repo create hanterar skapandet av mappen. Om "owner/repo" anges, skapas mappen "repo".
+          gh repo create "$REPO_NAME_INPUT" --public --clone
+
+      # Steg 4: Kopiera mallar och ersätt platshållare
+      - name: Kopiera mall och ersätt platshållare
+        env:
+          REPO_NAME_INPUT: ${{ inputs.repo_name }}
+          INTEGRATION_NAME_INPUT: ${{ inputs.integration_name }}
+        run: |
+          # Extrahera mappnamnet från input (hanterar "owner/repo" vs "repo")
+          DIR_NAME=$(basename "$REPO_NAME_INPUT")
+
+          # Kopiera allt innehåll från repo_template till det nya repot
+          # -a bevarar rättigheter och kopierar rekursivt
+          cp -a repo_template/. "$DIR_NAME/"
+
+          cd "$DIR_NAME"
+
+          # 1. Ersätt innehåll i alla filer
+          # Använder pipe (|) som avgränsare i sed för att hantera slash i input
+          find . -type f -exec sed -i "s|\[custom_component\]|$REPO_NAME_INPUT|g" {} +
+          find . -type f -exec sed -i "s|\[integration_name\]|$INTEGRATION_NAME_INPUT|g" {} +
+
+          # 2. Döp om filer och mappar
+          # VIKTIGT: Använder -depth för att döpa om filer/mappar "underifrån och upp".
+
+          # Döp om filer/mappar som innehåller [custom_component]
+          find . -depth -name "*\[custom_component\]*" -execdir bash -c 'mv "$1" "${1//\[custom_component\]/$2}"' _ {} "$REPO_NAME_INPUT" \;
+
+          # Döp om filer/mappar som innehåller [integration_name]
+          find . -depth -name "*\[integration_name\]*" -execdir bash -c 'mv "$1" "${1//\[integration_name\]/$2}"' _ {} "$INTEGRATION_NAME_INPUT" \;
+
+      # Steg 5: Pusha koden till det nya repot
+      - name: Pusha till nytt repository
+        env:
+           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+           REPO_NAME_INPUT: ${{ inputs.repo_name }}
+        run: |
+          DIR_NAME=$(basename "$REPO_NAME_INPUT")
+          cd "$DIR_NAME"
+
+          # Konfigurera gh som credential helper för git
+          gh auth setup-git
+
+          git add .
+          git commit -m "Initial commit from template"
+          git push origin HEAD
+
+      # Steg 6: Uppdatera repos.json i det NUVARANDE repot
+      - name: Uppdatera repos.json
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO_NAME_INPUT: ${{ inputs.repo_name }}
+        run: |
+          # Hämta ägaren för nuvarande repo (antas vara samma för nya repot)
+          OWNER=$(gh repo view --json owner -q .owner.login)
+
+          # Hantera om repo_name_input redan innehåller ägare
+          if [[ "$REPO_NAME_INPUT" == *"/"* ]]; then
+             NEW_ENTRY="$REPO_NAME_INPUT"
+          else
+             NEW_ENTRY="$OWNER/$REPO_NAME_INPUT"
+          fi
+
+          # Använd jq för att lägga till det nya repot i listan
+          jq --arg new_repo "$NEW_ENTRY" '. += [$new_repo]' repos.json > repos.json.tmp && mv repos.json.tmp repos.json
+
+          # Commita och pusha ändringen till detta repo
+          # Vi behöver konfigurera gh auth setup-git här också om checkout inte gjorde det permanent
+          gh auth setup-git
+
+          git add repos.json
+          git commit -m "Lägg till $NEW_ENTRY i repos.json"
+          git push
+
+      # Steg 7: Trigga distributions-flödet för att skicka ut workflows till det nya repot
+      - name: Trigga distribution
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          gh workflow run "Distribute Workflows"

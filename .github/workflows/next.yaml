@@ -53,7 +53,8 @@ jobs:
       - name: Set up Python (Latest)
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.x"
+          check-latest: true
 
       - name: Install dependencies (Dev/Nightly)
         run: |
