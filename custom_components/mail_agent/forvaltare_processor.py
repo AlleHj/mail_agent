@@ -1,11 +1,14 @@
 # Version: 0.19.0
-"""Processor för att hantera fakturor och förvaltning."""
+"""Processor för att hantera fakturor och förvaltning via Google Drive."""
 
 import json
-import shutil
 from datetime import datetime
 from pathlib import Path
+
 from google import genai
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
 from homeassistant.util import dt as dt_util
 from .const import LOGGER
@@ -21,16 +24,19 @@ class ForvaltareProcessor:
         self.gemini_api_key = config.get("gemini_api_key")
         self.gemini_model = config.get("gemini_model")
         self.enable_debug = config.get("enable_debug")
-        self.storage_path = config.get("storage_path")
 
-        # Vi behöver inte SMTP eller Kalender här enligt spec
+        # Google Drive Konfiguration
+        self.google_client_id = config.get("google_client_id")
+        self.google_client_secret = config.get("google_client_secret")
+        self.google_refresh_token = config.get("google_refresh_token")
+        self.target_folder_name = config.get("target_folder_name", "Fakturor")
 
     def process_email(self, sender, subject, body, attachment_paths):
         """
         Huvudmetod som anropas från MailAgentScanner.
 
         1. Analysera data med AI (PDF + Subject + Body).
-        2. Spara filen strukturerat.
+        2. Ladda upp filen till Google Drive.
         3. Skicka Persistent Notification.
         """
 
@@ -62,18 +68,15 @@ class ForvaltareProcessor:
                 "attachments": [str(p) for p in attachment_paths]
             })
 
-            # 2. Spara filer
-            saved_files = []
-            if ai_data.get("invoice_found") is True and attachment_paths:
-                saved_files = self._save_files(ai_data, attachment_paths)
-            elif attachment_paths:
-                # Fallback: spara även om AI inte är 100% säker, men använd dagens datum?
-                # Specifikationen sa: "Om AI:t absolut inte kan hitta något datum ... använd dagens datum".
-                # Så vi sparar alltid om det finns bilagor och vi har kört analysen.
-                saved_files = self._save_files(ai_data, attachment_paths)
+            # 2. Ladda upp filer till Drive
+            uploaded_files = []
+            if attachment_paths:
+                # Vi försöker ladda upp även om AI inte är 100% säker, för att inte tappa bort dokument.
+                # Om konfiguration saknas loggas ett fel.
+                uploaded_files = self._upload_to_drive(ai_data, attachment_paths)
 
             # 3. Notifiera
-            self._create_notification(ai_data, sender, saved_files)
+            self._create_notification(ai_data, sender, uploaded_files)
 
             # Returnera data så att sensorn kan uppdateras
             return ai_data
@@ -157,16 +160,65 @@ class ForvaltareProcessor:
                     pass
             return {}
 
-    def _save_files(self, ai_data, attachment_paths):
-        """Sparar filer till konfigurerad mappstruktur."""
-        if not self.storage_path:
-            LOGGER.warning("Ingen lagringssökväg (storage_path) konfigurerad. Kan inte spara filer.")
+    def _get_drive_service(self):
+        """Skapar och returnerar en autentiserad Google Drive Service."""
+        if not all([self.google_client_id, self.google_client_secret, self.google_refresh_token]):
+            LOGGER.error("Saknar inloggningsuppgifter för Google Drive (Client ID, Secret eller Refresh Token).")
+            return None
+
+        try:
+            creds = Credentials(
+                None, # Ingen access token från start
+                refresh_token=self.google_refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=self.google_client_id,
+                client_secret=self.google_client_secret
+            )
+            service = build('drive', 'v3', credentials=creds)
+            return service
+        except Exception as e:
+            LOGGER.error(f"Kunde inte skapa Google Drive-tjänst: {e}")
+            return None
+
+    def _get_or_create_folder(self, service, folder_name, parent_id=None):
+        """Hittar en mapp med givet namn (inom parent_id) eller skapar den."""
+        try:
+            query = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and trashed=false"
+            if parent_id:
+                query += f" and '{parent_id}' in parents"
+
+            results = service.files().list(q=query, fields="files(id, name)").execute()
+            files = results.get('files', [])
+
+            if files:
+                # Mappen finns, returnera ID
+                return files[0]['id']
+            else:
+                # Mappen finns inte, skapa den
+                file_metadata = {
+                    'name': folder_name,
+                    'mimeType': 'application/vnd.google-apps.folder'
+                }
+                if parent_id:
+                    file_metadata['parents'] = [parent_id]
+
+                folder = service.files().create(body=file_metadata, fields='id').execute()
+                if self.enable_debug:
+                    LOGGER.info(f"Skapade mapp på Drive: {folder_name} (ID: {folder.get('id')})")
+                return folder.get('id')
+
+        except Exception as e:
+            LOGGER.error(f"Fel vid mapphantering ({folder_name}): {e}")
+            return None
+
+    def _upload_to_drive(self, ai_data, attachment_paths):
+        """Laddar upp filer till Google Drive i strukturen Grundmapp/År/Månad."""
+        service = self._get_drive_service()
+        if not service:
             return []
 
         # Datumlogik för mappstruktur
         date_str = ai_data.get("due_date")
-
-        # Fallback till dagens datum om inget hittades
         if not date_str:
             date_obj = dt_util.now()
         else:
@@ -178,36 +230,36 @@ class ForvaltareProcessor:
         year = date_obj.strftime("%Y")
         month_name = self._get_swedish_month(date_obj.month)
 
-        # Skapa sökväg: Grundmapp/ÅÅÅÅ/Månad/
-        target_dir = Path(self.storage_path) / year / month_name
-
-        saved_paths = []
-
-        try:
-            # Försök skapa mappar (motsvarar 'om Drive inte svarar' om detta misslyckas vid nätverksmount)
-            target_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as e:
-            LOGGER.error(f"Kunde inte skapa mapp {target_dir}: {e}")
+        # 1. Hitta/Skapa Grundmapp
+        root_id = self._get_or_create_folder(service, self.target_folder_name)
+        if not root_id:
             return []
 
-        # Konstruera filnamn
-        # Format: Avsändare_Förfallodatum_Fakturanr_Summa_UniktID.pdf
+        # 2. Hitta/Skapa Årsmapp
+        year_id = self._get_or_create_folder(service, year, parent_id=root_id)
+        if not year_id:
+            return []
+
+        # 3. Hitta/Skapa Månadsmapp
+        month_id = self._get_or_create_folder(service, month_name, parent_id=year_id)
+        if not month_id:
+            return []
+
+        uploaded_files = []
+
+        # Filnamnskomponenter
         sender = self._sanitize_filename(ai_data.get("sender_name", "Okänd"))
         due_date = date_obj.strftime("%Y-%m-%d")
         inv_no = self._sanitize_filename(ai_data.get("invoice_number", "Saknas"))
         amount = self._sanitize_filename(ai_data.get("total_amount", "0"))
         ai_unique_id = self._sanitize_filename(ai_data.get("unique_id", ""))
 
-        # Hantera flera bilagor genom att lägga till index om det behövs
         for idx, src_path in enumerate(attachment_paths):
             try:
                 src = Path(src_path)
-                suffix = src.suffix # Behåll ändelse (.pdf)
+                suffix = src.suffix
 
-                # Konstruera unikt ID del
-                # Om vi har flera filer lägger vi alltid till index för säkerhets skull
-                # Om AI:t gav ett ID, använd det också
-
+                # Unikt ID
                 unique_part = ""
                 if ai_unique_id:
                     unique_part += f"_{ai_unique_id}"
@@ -216,20 +268,27 @@ class ForvaltareProcessor:
                      unique_part += f"_{idx+1}"
 
                 new_filename = f"{sender}_{due_date}_{inv_no}_{amount}{unique_part}{suffix}"
-                dest_path = target_dir / new_filename
 
-                shutil.copy2(src, dest_path)
-                saved_paths.append(str(dest_path))
+                # Ladda upp filen
+                file_metadata = {
+                    'name': new_filename,
+                    'parents': [month_id]
+                }
+                media = MediaFileUpload(src_path, mimetype='application/pdf') # Antag PDF, eller gissa typ
+
+                file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
 
                 if self.enable_debug:
-                    LOGGER.info(f"Sparade fil till: {dest_path}")
+                    LOGGER.info(f"Laddade upp fil till Drive: {new_filename} (ID: {file.get('id')})")
+
+                uploaded_files.append(new_filename)
 
             except Exception as e:
-                LOGGER.error(f"Kunde inte spara fil {src_path} till {target_dir}: {e}")
+                LOGGER.error(f"Kunde inte ladda upp fil {src_path} till Drive: {e}")
 
-        return saved_paths
+        return uploaded_files
 
-    def _create_notification(self, ai_data, sender_email, saved_files):
+    def _create_notification(self, ai_data, sender_email, uploaded_files):
         """Skapar en Persistent Notification i Home Assistant."""
         summary = ai_data.get("summary", "Okänd faktura")
         amount = ai_data.get("total_amount", "? kr")
@@ -237,9 +296,10 @@ class ForvaltareProcessor:
 
         message = f"Faktura från {sender_name} hanterad.\nInfo: {summary}\nSumma: {amount}"
 
-        if saved_files:
-            message += f"\n\nSparade {len(saved_files)} filer."
-            # Vi kan lägga till sökvägarna om vi vill, men det kanske blir kladdigt
+        if uploaded_files:
+            message += f"\n\nLaddade upp {len(uploaded_files)} filer till Google Drive."
+        else:
+             message += "\n\nVARNING: Inga filer laddades upp (fel eller inga bilagor)."
 
         # Skicka persistent notification
         self.hass.add_job(

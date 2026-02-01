@@ -25,7 +25,11 @@ TYPE_KALLELSE = "kallelse"
 TYPE_FORVALTARE = "forvaltare"
 
 # Options / Storage
-CONF_STORAGE_PATH = "storage_path"
+CONF_STORAGE_PATH = "storage_path" # Används ej för Drive-uppladdning
+CONF_GOOGLE_CLIENT_ID = "google_client_id"
+CONF_GOOGLE_CLIENT_SECRET = "google_client_secret"
+CONF_GOOGLE_REFRESH_TOKEN = "google_refresh_token"
+CONF_TARGET_FOLDER_NAME = "target_folder_name"
 
 # Options / Gemini
 CONF_SCAN_INTERVAL = "scan_interval"
@@ -53,5 +57,6 @@ DEFAULT_GEMINI_MODEL = "gemini-3-pro-preview"
 DEFAULT_INTERPRETATION_TYPE = TYPE_KALLELSE
 DEFAULT_SMTP_SENDER_NAME = "Mail Agent"
 DEFAULT_STORAGE_PATH = "media/fakturor"
+DEFAULT_TARGET_FOLDER_NAME = "Fakturor"
 
 LOGGER = logging.getLogger(__package__)
