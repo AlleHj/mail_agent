@@ -2,7 +2,6 @@
 """Processor för att hantera fakturor och förvaltning."""
 
 import json
-import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -236,7 +235,7 @@ class ForvaltareProcessor:
         amount = ai_data.get("total_amount", "? kr")
         sender_name = ai_data.get("sender_name", sender_email)
 
-        message = f"Faktura från {sender_name} hanterad.\nSumma: {amount}"
+        message = f"Faktura från {sender_name} hanterad.\nInfo: {summary}\nSumma: {amount}"
 
         if saved_files:
             message += f"\n\nSparade {len(saved_files)} filer."
