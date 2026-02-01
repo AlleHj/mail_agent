@@ -41,7 +41,9 @@ from .const import (
     CONF_NOTIFY_SERVICE_1,
     CONF_NOTIFY_SERVICE_2,
     CONF_INTERPRETATION_TYPE,
+    CONF_STORAGE_PATH,
     TYPE_KALLELSE,
+    TYPE_FORVALTARE,
     DEFAULT_IMAP_PORT,
     DEFAULT_SMTP_PORT,
     DEFAULT_FOLDER,
@@ -50,6 +52,7 @@ from .const import (
     DEFAULT_GEMINI_MODEL,
     DEFAULT_INTERPRETATION_TYPE,
     DEFAULT_SMTP_SENDER_NAME,
+    DEFAULT_STORAGE_PATH,
 )
 
 async def validate_input(hass: HomeAssistant, data: dict) -> dict:
@@ -117,6 +120,7 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_SMTP_PORT: user_input.get(CONF_SMTP_PORT),
                     CONF_SMTP_SENDER_NAME: user_input.get(CONF_SMTP_SENDER_NAME),
                     CONF_INTERPRETATION_TYPE: user_input.get(CONF_INTERPRETATION_TYPE),
+                    CONF_STORAGE_PATH: user_input.get(CONF_STORAGE_PATH),
                     CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL),
                     CONF_ENABLE_DEBUG: user_input.get(CONF_ENABLE_DEBUG),
                     CONF_GEMINI_API_KEY: user_input.get(CONF_GEMINI_API_KEY),
@@ -160,6 +164,7 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
             SelectSelectorConfig(
                 options=[
                     {"label": "Tolka kallelse", "value": TYPE_KALLELSE},
+                    {"label": "Förvaltare (Faktura/Admin)", "value": TYPE_FORVALTARE},
                 ],
                 mode=SelectSelectorMode.DROPDOWN,
                 translation_key="interpretation_type"
@@ -182,6 +187,7 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
 
             # Logic Type
             vol.Optional(CONF_INTERPRETATION_TYPE, default=DEFAULT_INTERPRETATION_TYPE): type_selector,
+            vol.Optional(CONF_STORAGE_PATH, default=DEFAULT_STORAGE_PATH): str,
 
             # AI
             vol.Required(CONF_GEMINI_API_KEY): str,
@@ -217,6 +223,7 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
                 CONF_SMTP_PORT: user_input.get(CONF_SMTP_PORT),
                 CONF_SMTP_SENDER_NAME: user_input.get(CONF_SMTP_SENDER_NAME),
                 CONF_INTERPRETATION_TYPE: user_input.get(CONF_INTERPRETATION_TYPE),
+                CONF_STORAGE_PATH: user_input.get(CONF_STORAGE_PATH),
                 CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL),
                 CONF_ENABLE_DEBUG: user_input.get(CONF_ENABLE_DEBUG),
                 CONF_GEMINI_API_KEY: user_input.get(CONF_GEMINI_API_KEY),
@@ -259,6 +266,7 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
             SelectSelectorConfig(
                 options=[
                     {"label": "Tolka kallelse", "value": TYPE_KALLELSE},
+                    {"label": "Förvaltare (Faktura/Admin)", "value": TYPE_FORVALTARE},
                 ],
                 mode=SelectSelectorMode.DROPDOWN,
                 translation_key="interpretation_type"
@@ -277,6 +285,7 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
             vol.Optional(CONF_SMTP_SENDER_NAME, default=options.get(CONF_SMTP_SENDER_NAME, DEFAULT_SMTP_SENDER_NAME)): str,
 
             vol.Optional(CONF_INTERPRETATION_TYPE, default=options.get(CONF_INTERPRETATION_TYPE, DEFAULT_INTERPRETATION_TYPE)): type_selector,
+            vol.Optional(CONF_STORAGE_PATH, default=options.get(CONF_STORAGE_PATH, DEFAULT_STORAGE_PATH)): str,
             vol.Optional(CONF_SCAN_INTERVAL, default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): cv.positive_int,
             vol.Optional(CONF_ENABLE_DEBUG, default=options.get(CONF_ENABLE_DEBUG, DEFAULT_ENABLE_DEBUG)): bool,
             vol.Optional(CONF_GEMINI_API_KEY, default=options.get(CONF_GEMINI_API_KEY, "")): str,

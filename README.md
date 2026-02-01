@@ -2,10 +2,16 @@
 ![Home Assistant](https://img.shields.io/badge/home%20assistant-component-orange.svg)
 
 Mail Agent för Home Assistant
-Version: 0.18.0
-Uppdaterad: 2025-12-18
+Version: 0.19.0
+Uppdaterad: 2026-05-10
 
-Mail Agent är en intelligent "Custom Component" för Home Assistant som automatiserar hanteringen av inkommande post. Genom att kombinera Google Gemini (Generativ AI) med traditionell e-posthantering (IMAP/SMTP), fungerar komponenten som en smart sekreterare som läser dina mail, förstår innehållet (inklusive bilagor) och automatiskt bokar in möten i din kalender.
+Mail Agent är en intelligent "Custom Component" för Home Assistant som automatiserar hanteringen av inkommande post. Genom att kombinera Google Gemini (Generativ AI) med traditionell e-posthantering (IMAP/SMTP), fungerar komponenten som en smart sekreterare eller förvaltare som läser dina mail, förstår innehållet (inklusive bilagor) och agerar därefter.
+
+🚀 Nyheter i v0.19.0 (Förvaltare & Fakturor)
+Denna version introducerar en helt ny typ av logik: "Förvaltare".
+📁 Fakturahantering: Automatisk sortering och namngivning av inkommande fakturor.
+💾 Arkivering: Sparar filer strukturerat efter år och månad.
+🔔 Notifieringar: Få en diskret notifiering i Home Assistant när en faktura har behandlats.
 
 🚀 Nyheter i v0.18.0 (Restore & Stabilitet)
 Denna version fokuserar på dataintegritet och driftstabilitet:
@@ -23,7 +29,8 @@ sensor.mail_agent_emails_processed: En räknare som visar totalt antal mail agen
 
 📋 Huvudfunktioner
 🧠 AI-Driven Analys: Använder Google Gemini för att förstå naturligt språk i mail och bifogade PDF-kallelser.
-📅 Automatisk Kalenderbokning: Extraherar tid, plats och sammanfattning och skapar händelser i din kalender.
+📅 Automatisk Kalenderbokning (Typ: Kallelse): Extraherar tid, plats och sammanfattning och skapar händelser i din kalender.
+💼 Fakturahantering (Typ: Förvaltare): Extraherar belopp, OCR och datum från fakturor och sparar dem strukturerat på disk.
 🔒 Trådsäkerhet: "Global Scanning Lock" förhindrar att samma mail bearbetas två gånger samtidigt.
 📧 Robust SMTP: Skickar multipart-mail endast vid behov och hanterar bilagor korrekt.
 🎨 Dashboard-ready: Bygg snygga statuspaneler i Lovelace med de nya sensorerna.

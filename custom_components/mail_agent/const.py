@@ -1,4 +1,4 @@
-# Version: 0.18.0 - 2025-12-18
+# Version: 0.19.0 - 2026-05-10
 """Konstanter för Mail Agent."""
 import logging
 
@@ -22,6 +22,10 @@ CONF_SMTP_SENDER_NAME = "smtp_sender_name"
 # Options / Logic Type
 CONF_INTERPRETATION_TYPE = "interpretation_type"
 TYPE_KALLELSE = "kallelse"
+TYPE_FORVALTARE = "forvaltare"
+
+# Options / Storage
+CONF_STORAGE_PATH = "storage_path"
 
 # Options / Gemini
 CONF_SCAN_INTERVAL = "scan_interval"
@@ -48,5 +52,6 @@ DEFAULT_ENABLE_DEBUG = False
 DEFAULT_GEMINI_MODEL = "gemini-3-pro-preview"
 DEFAULT_INTERPRETATION_TYPE = TYPE_KALLELSE
 DEFAULT_SMTP_SENDER_NAME = "Mail Agent"
+DEFAULT_STORAGE_PATH = "media/fakturor"
 
 LOGGER = logging.getLogger(__package__)
