@@ -1,4 +1,4 @@
-# Version: 0.22.0
+# Version: 0.23.0
 """Processor för att hantera fakturor och förvaltning via Google Drive."""
 
 import json
@@ -65,13 +65,14 @@ class ForvaltareProcessor:
                 "attachments": [str(p) for p in attachment_paths]
             })
 
-            # 2. Ladda upp filer till Drive
+            # 2. Ladda upp filer till Drive (eller förbered mappar för JSON)
             uploaded_files = []
             year_folder_id = None
 
             service = self._get_drive_service()
 
-            if service and attachment_paths:
+            if service:
+                # Vi kör alltid detta för att få year_folder_id till JSON, även utan bilagor
                 uploaded_files, year_folder_id = self._upload_to_drive(service, ai_data, attachment_paths)
 
             # 3. Uppdatera Översikts-JSON
@@ -265,10 +266,8 @@ class ForvaltareProcessor:
                 media = MediaFileUpload(src_path, mimetype='application/pdf')
 
                 file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-
                 if self.enable_debug:
                     LOGGER.info(f"Laddade upp fil till Drive: {new_filename} (ID: {file.get('id')})")
-
                 uploaded_files.append(new_filename)
 
             except Exception as e:
@@ -277,7 +276,7 @@ class ForvaltareProcessor:
         return uploaded_files, year_id
 
     def _process_summary_json(self, service, year_folder_id, ai_data):
-        """Hämtar, uppdaterar och sparar JSON-översikten i årsmappen med svenska nycklar."""
+        """Hämtar, uppdaterar och sparar JSON-översikten i årsmappen med svenska nycklar och statistik."""
         if not self.summary_filename:
             return
 
@@ -287,7 +286,13 @@ class ForvaltareProcessor:
         files = results.get('files', [])
 
         file_id = None
-        current_data = {"år": "", "totalsumma_år": 0.0, "avsändare": {}}
+        # Initiera med nya strukturen
+        current_data = {
+            "år": "",
+            "totalsumma_år": 0.0,
+            "totalt_antal_fakturor": 0,
+            "avsändare": {}
+        }
 
         if files:
             file_id = files[0]['id']
@@ -309,47 +314,57 @@ class ForvaltareProcessor:
         if "avsändare" not in current_data:
             current_data["avsändare"] = {}
 
-        # Sätt år baserat på fakturadatum (som också styr vilken årsmapp vi är i)
-        d_str = ai_data.get("invoice_date") or ai_data.get("due_date")
-        if d_str and d_str.lower() != "okänt":
-             try:
-                 current_data["år"] = str(datetime.strptime(d_str, "%Y-%m-%d").year)
-             except (ValueError, TypeError):
-                 # Fallback: om filen redan har ett år, behåll det. Annars dagens år?
-                 pass
+        # Sätt år
+        if not current_data.get("år"):
+             d_str = ai_data.get("invoice_date") or ai_data.get("due_date")
+             if d_str and d_str.lower() != "okänt":
+                 try:
+                     current_data["år"] = str(datetime.strptime(d_str, "%Y-%m-%d").year)
+                 except (ValueError, TypeError):
+                     pass
         if not current_data.get("år"):
              current_data["år"] = str(dt_util.now().year)
 
         sender = ai_data.get("sender_name", "Okänd")
-        if sender not in current_data["avsändare"]:
-            current_data["avsändare"][sender] = []
 
-        # Dubblettkontroll (Använd fakturanummer eller OCR som unik identifierare)
+        # Hantera migrering från lista till objekt för avsändare
+        if sender in current_data["avsändare"] and isinstance(current_data["avsändare"][sender], list):
+            old_list = current_data["avsändare"][sender]
+            current_data["avsändare"][sender] = {
+                "summa": 0.0,
+                "antal": 0,
+                "fakturor": old_list
+            }
+        elif sender not in current_data["avsändare"]:
+            current_data["avsändare"][sender] = {
+                "summa": 0.0,
+                "antal": 0,
+                "fakturor": []
+            }
+
+        fakturor_lista = current_data["avsändare"][sender]["fakturor"]
+
+        # Dubblettkontroll
         new_inv = ai_data.get("invoice_number", "okänt")
         new_ocr = ai_data.get("ocr_number", "okänt")
 
-        # Fallback ID för kontroll
         check_id = new_inv if new_inv != "okänt" else new_ocr
         if check_id == "okänt":
-             # Om både fakturanr och ocr saknas, använd hash av summary+datum
              raw = f"{ai_data.get('summary')}{ai_data.get('invoice_date')}"
              check_id = str(hash(raw))
 
         exists = False
-        for item in current_data["avsändare"][sender]:
-            # Jämför mot fakturanummer eller ocr i listan
+        for item in fakturor_lista:
             existing_inv = item.get("fakturanummer", "okänt")
             existing_ocr = item.get("ocr", "okänt")
 
-            # Matchning?
             if (existing_inv != "okänt" and existing_inv == new_inv) or \
                (existing_ocr != "okänt" and existing_ocr == new_ocr) or \
-               (item.get("unikt_id") == check_id): # För bakåtkompatibilitet eller fallback
+               (item.get("unikt_id") == check_id):
                  exists = True
                  break
 
         if not exists:
-            # Skapa posten
             entry = {
                 "typ": ai_data.get("type", "Faktura"),
                 "fakturanummer": ai_data.get("invoice_number", "okänt"),
@@ -361,55 +376,72 @@ class ForvaltareProcessor:
                 "betalsätt": ai_data.get("payment_method", "okänt"),
                 "telefon": ai_data.get("phone_number", "okänt"),
                 "beskrivning": ai_data.get("description", ""),
-                "unikt_id": check_id, # Sparar ID för intern koll, men använder svenska nycklar i övrigt
+                "unikt_id": check_id,
                 "tillagd": dt_util.now().isoformat()
             }
-            current_data["avsändare"][sender].append(entry)
+            fakturor_lista.append(entry)
+            fakturor_lista.sort(key=lambda x: x.get("fakturadatum") or "9999-99-99")
 
-            # Sortera på fakturadatum
-            current_data["avsändare"][sender].sort(key=lambda x: x.get("fakturadatum") or "9999-99-99")
-
-            # 3. Räkna om totalsumma
-            total = 0.0
-            for s_list in current_data["avsändare"].values():
-                for item in s_list:
-                    val = item.get("belopp", 0)
-                    if "kredit" in str(item.get("typ", "")).lower():
-                        total -= val
-                    else:
-                        total += val
-            current_data["totalsumma_år"] = round(total, 2)
-
-            # 4. Ladda upp
-            json_content = json.dumps(current_data, indent=2, ensure_ascii=False)
-            media_body = MediaIoBaseUpload(
-                io.BytesIO(json_content.encode('utf-8')),
-                mimetype='application/json',
-                resumable=True
-            )
-
-            if file_id:
-                service.files().update(
-                    fileId=file_id,
-                    media_body=media_body
-                ).execute()
-                if self.enable_debug:
-                    LOGGER.info(f"Uppdaterade JSON-fil: {self.summary_filename}")
-            else:
-                file_metadata = {
-                    'name': self.summary_filename,
-                    'parents': [year_folder_id],
-                    'mimeType': 'application/json'
-                }
-                service.files().create(
-                    body=file_metadata,
-                    media_body=media_body
-                ).execute()
-                if self.enable_debug:
-                    LOGGER.info(f"Skapade ny JSON-fil: {self.summary_filename}")
         else:
             if self.enable_debug:
                 LOGGER.info("Fakturan finns redan i JSON-översikten (dubblett).")
+
+        # 3. Räkna om totalsummor och statistik
+        total_year = 0.0
+        count_year = 0
+
+        for s_name, s_data in current_data["avsändare"].items():
+            # Migrering för andra avsändare om vi loopar igenom
+            if isinstance(s_data, list):
+                 s_data = {"summa": 0.0, "antal": 0, "fakturor": s_data}
+                 current_data["avsändare"][s_name] = s_data
+
+            sub_total = 0.0
+            sub_count = len(s_data["fakturor"])
+
+            for item in s_data["fakturor"]:
+                val = item.get("belopp", 0)
+                if "kredit" in str(item.get("typ", "")).lower():
+                    sub_total -= val
+                else:
+                    sub_total += val
+
+            s_data["summa"] = round(sub_total, 2)
+            s_data["antal"] = sub_count
+
+            total_year += sub_total
+            count_year += sub_count
+
+        current_data["totalsumma_år"] = round(total_year, 2)
+        current_data["totalt_antal_fakturor"] = count_year
+
+        # 4. Ladda upp
+        json_content = json.dumps(current_data, indent=2, ensure_ascii=False)
+        media_body = MediaIoBaseUpload(
+            io.BytesIO(json_content.encode('utf-8')),
+            mimetype='application/json',
+            resumable=True
+        )
+
+        if file_id:
+            service.files().update(
+                fileId=file_id,
+                media_body=media_body
+            ).execute()
+            if self.enable_debug:
+                LOGGER.info(f"Uppdaterade JSON-fil: {self.summary_filename}")
+        else:
+            file_metadata = {
+                'name': self.summary_filename,
+                'parents': [year_folder_id],
+                'mimeType': 'application/json'
+            }
+            service.files().create(
+                body=file_metadata,
+                media_body=media_body
+            ).execute()
+            if self.enable_debug:
+                LOGGER.info(f"Skapade ny JSON-fil: {self.summary_filename}")
 
     def _parse_amount(self, amount_str):
         if not amount_str:
