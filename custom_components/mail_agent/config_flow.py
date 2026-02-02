@@ -45,6 +45,7 @@ from .const import (
     CONF_GOOGLE_CLIENT_SECRET,
     CONF_GOOGLE_REFRESH_TOKEN,
     CONF_DRIVE_FOLDER_PATH,
+    CONF_SUMMARY_FILENAME,
     TYPE_KALLELSE,
     TYPE_FORVALTARE,
     DEFAULT_IMAP_PORT,
@@ -56,6 +57,7 @@ from .const import (
     DEFAULT_INTERPRETATION_TYPE,
     DEFAULT_SMTP_SENDER_NAME,
     DEFAULT_DRIVE_FOLDER_PATH,
+    DEFAULT_SUMMARY_FILENAME,
 )
 
 async def validate_input(hass: HomeAssistant, data: dict) -> dict:
@@ -127,6 +129,7 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_GOOGLE_CLIENT_SECRET: user_input.get(CONF_GOOGLE_CLIENT_SECRET),
                     CONF_GOOGLE_REFRESH_TOKEN: user_input.get(CONF_GOOGLE_REFRESH_TOKEN),
                     CONF_DRIVE_FOLDER_PATH: user_input.get(CONF_DRIVE_FOLDER_PATH),
+                    CONF_SUMMARY_FILENAME: user_input.get(CONF_SUMMARY_FILENAME),
                     CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL),
                     CONF_ENABLE_DEBUG: user_input.get(CONF_ENABLE_DEBUG),
                     CONF_GEMINI_API_KEY: user_input.get(CONF_GEMINI_API_KEY),
@@ -197,6 +200,7 @@ class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
             vol.Optional(CONF_GOOGLE_CLIENT_SECRET): str,
             vol.Optional(CONF_GOOGLE_REFRESH_TOKEN): str,
             vol.Optional(CONF_DRIVE_FOLDER_PATH, default=DEFAULT_DRIVE_FOLDER_PATH): str,
+            vol.Optional(CONF_SUMMARY_FILENAME, default=DEFAULT_SUMMARY_FILENAME): str,
 
             # AI
             vol.Required(CONF_GEMINI_API_KEY): str,
@@ -236,6 +240,7 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
                 CONF_GOOGLE_CLIENT_SECRET: user_input.get(CONF_GOOGLE_CLIENT_SECRET),
                 CONF_GOOGLE_REFRESH_TOKEN: user_input.get(CONF_GOOGLE_REFRESH_TOKEN),
                 CONF_DRIVE_FOLDER_PATH: user_input.get(CONF_DRIVE_FOLDER_PATH),
+                CONF_SUMMARY_FILENAME: user_input.get(CONF_SUMMARY_FILENAME),
                 CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL),
                 CONF_ENABLE_DEBUG: user_input.get(CONF_ENABLE_DEBUG),
                 CONF_GEMINI_API_KEY: user_input.get(CONF_GEMINI_API_KEY),
@@ -301,6 +306,7 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
             vol.Optional(CONF_GOOGLE_CLIENT_SECRET, description={"suggested_value": options.get(CONF_GOOGLE_CLIENT_SECRET, "")}): str,
             vol.Optional(CONF_GOOGLE_REFRESH_TOKEN, description={"suggested_value": options.get(CONF_GOOGLE_REFRESH_TOKEN, "")}): str,
             vol.Optional(CONF_DRIVE_FOLDER_PATH, default=options.get(CONF_DRIVE_FOLDER_PATH, DEFAULT_DRIVE_FOLDER_PATH)): str,
+            vol.Optional(CONF_SUMMARY_FILENAME, default=options.get(CONF_SUMMARY_FILENAME, DEFAULT_SUMMARY_FILENAME)): str,
             vol.Optional(CONF_SCAN_INTERVAL, default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): cv.positive_int,
             vol.Optional(CONF_ENABLE_DEBUG, default=options.get(CONF_ENABLE_DEBUG, DEFAULT_ENABLE_DEBUG)): bool,
             vol.Optional(CONF_GEMINI_API_KEY, default=options.get(CONF_GEMINI_API_KEY, "")): str,

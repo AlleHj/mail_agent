@@ -1,14 +1,16 @@
-# Version: 0.19.0
+# Version: 0.20.0
 """Processor för att hantera fakturor och förvaltning via Google Drive."""
 
 import json
+import io
+import re
 from datetime import datetime
 from pathlib import Path
 
 from google import genai
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 from homeassistant.util import dt as dt_util
 from .const import LOGGER
@@ -29,16 +31,12 @@ class ForvaltareProcessor:
         self.google_client_id = config.get("google_client_id")
         self.google_client_secret = config.get("google_client_secret")
         self.google_refresh_token = config.get("google_refresh_token")
-        # Standardvärde "Fakturor" om inget anges
         self.drive_folder_path = config.get("drive_folder_path", "Fakturor")
+        self.summary_filename = config.get("summary_filename", "fakturor_oversikt.json")
 
     def process_email(self, sender, subject, body, attachment_paths):
         """
         Huvudmetod som anropas från MailAgentScanner.
-
-        1. Analysera data med AI (PDF + Subject + Body).
-        2. Ladda upp filen till Google Drive.
-        3. Skicka Persistent Notification.
         """
 
         if not self.gemini_api_key:
@@ -50,7 +48,6 @@ class ForvaltareProcessor:
             # 1. Anropa AI
             ai_data = self._call_gemini(attachment_paths, subject, body)
 
-            # Hantera lista från AI
             if isinstance(ai_data, list):
                 if len(ai_data) > 0:
                     ai_data = ai_data[0]
@@ -60,7 +57,6 @@ class ForvaltareProcessor:
             if self.enable_debug:
                 LOGGER.info("AI RESULTAT (Förvaltare):\n%s", json.dumps(ai_data, indent=2, ensure_ascii=False))
 
-            # Fire event (kan vara bra för debugging/automatisering)
             self.hass.bus.fire("mail_agent.scanned_document", {
                 "type": "forvaltare",
                 "sender": sender,
@@ -71,15 +67,24 @@ class ForvaltareProcessor:
 
             # 2. Ladda upp filer till Drive
             uploaded_files = []
-            if attachment_paths:
-                # Vi försöker ladda upp även om AI inte är 100% säker, för att inte tappa bort dokument.
-                # Om konfiguration saknas loggas ett fel.
-                uploaded_files = self._upload_to_drive(ai_data, attachment_paths)
+            year_folder_id = None
 
-            # 3. Notifiera
+            # Vi behöver Drive Service för både uppladdning och JSON-hantering
+            service = self._get_drive_service()
+
+            if service and attachment_paths:
+                uploaded_files, year_folder_id = self._upload_to_drive(service, ai_data, attachment_paths)
+
+            # 3. Uppdatera Översikts-JSON
+            if service and year_folder_id:
+                try:
+                    self._process_summary_json(service, year_folder_id, ai_data)
+                except Exception as e:
+                    LOGGER.error(f"Kunde inte uppdatera översiktsfilen: {e}")
+
+            # 4. Notifiera
             self._create_notification(ai_data, sender, uploaded_files)
 
-            # Returnera data så att sensorn kan uppdateras
             return ai_data
 
         except Exception as e:
@@ -90,7 +95,6 @@ class ForvaltareProcessor:
         client = genai.Client(api_key=self.gemini_api_key)
         uploaded_files = []
 
-        # Ladda upp bilagor till Gemini
         for path in file_paths:
             try:
                 uploaded_files.append(client.files.upload(file=path, config={'mime_type': 'application/pdf'}))
@@ -106,35 +110,37 @@ class ForvaltareProcessor:
         Ämne: {subject}
         Text: {body}
 
-        Din uppgift är att analysera bifogade filer (om några), ämnesrad och brödtext för att hitta fakturainformation.
-        Informationen kan finnas i mailets text även om det finns en PDF.
+        Din uppgift är att analysera bifogade filer (om några), ämnesrad och brödtext.
 
-        LETA EFTER FÖLJANDE (Extremt noga):
-        1. **Betalningsmottagare/Avsändare**: Vem ska ha betalt? (T.ex. Telia, Skatteverket, Hyresvärden).
-        2. **Förfallodatum**: När ska det betalas? DETTA ÄR PRIO 1.
-           - Om förfallodatum saknas, leta efter fakturadatum.
-           - Format: YYYY-MM-DD.
-           - Om du absolut inte hittar något datum (varken förfall eller faktura), lämna tomt (koden hanterar fallback).
-        3. **Totalsumma**: Belopp att betala (inkl. valuta om möjligt).
-        4. **Fakturanummer/OCR**: Referensnummer.
-        5. **Unikt ID**: Skapa en kort, unik sträng baserat på innehållet (t.ex. OCR eller Fakturanr) för filnamnet.
+        LETA EFTER FÖLJANDE:
+        1. **Typ**: Är detta en "Faktura" eller "Kreditfaktura"?
+        2. **Avsändare**: Vem är det från? (T.ex. Comviq, Skatteverket).
+        3. **Datum**:
+           - **Fakturadatum**: När ställdes fakturan ut?
+           - **Förfallodatum**: När ska den betalas?
+           - Om datum saknas, använd dagens datum ({now_str}).
+        4. **Belopp**: Totalsumma (inkludera valuta, t.ex. "399 kr").
+        5. **Referenser**: Fakturanummer, OCR eller kundnummer.
+        6. **Unikt ID**: Identifiera ett unikt nummer (helst fakturanummer/OCR).
+        7. **Beskrivning**: En kortfattad text om vad det gäller (t.ex. "Mobilfaktura Jan").
 
         Svara strikt med JSON:
         {{
-            "invoice_found": boolean,  // True om det verkar vara en faktura eller viktigt dokument
+            "invoice_found": boolean,
+            "type": "Faktura" eller "Kreditfaktura",
             "sender_name": "Namn",
-            "due_date": "YYYY-MM-DD" eller null,
-            "total_amount": "Belopp",
-            "invoice_number": "OCR/Nr",
-            "unique_id": "UnikID",
-            "summary": "Kort sammanfattning (t.ex. 'Faktura Telia 499kr')",
-            "description": "Mer detaljerad beskrivning"
+            "invoice_date": "YYYY-MM-DD",
+            "due_date": "YYYY-MM-DD",
+            "total_amount": "Belopp kr",
+            "invoice_number": "Nummer",
+            "unique_id": "UniktID",
+            "summary": "Kort rubrik",
+            "description": "Beskrivning"
         }}
         """
 
         contents = uploaded_files + [prompt]
 
-        # Använd en säker metod för att kalla på modellen
         try:
             response = client.models.generate_content(
                 model=self.gemini_model,
@@ -142,7 +148,6 @@ class ForvaltareProcessor:
                 config={'response_mime_type': 'application/json'}
             )
 
-            # Städa upp uppladdade filer hos Google
             for f in uploaded_files:
                 try:
                     client.files.delete(name=f.name)
@@ -153,7 +158,6 @@ class ForvaltareProcessor:
 
         except Exception as e:
             LOGGER.error(f"Fel vid AI-anrop: {e}")
-            # Försök städa upp även vid fel
             for f in uploaded_files:
                 try:
                     client.files.delete(name=f.name)
@@ -162,96 +166,25 @@ class ForvaltareProcessor:
             return {}
 
     def _get_drive_service(self):
-        """Skapar och returnerar en autentiserad Google Drive Service."""
         if not all([self.google_client_id, self.google_client_secret, self.google_refresh_token]):
-            LOGGER.error("Saknar inloggningsuppgifter för Google Drive (Client ID, Secret eller Refresh Token).")
+            LOGGER.error("Saknar inloggningsuppgifter för Google Drive.")
             return None
 
         try:
             creds = Credentials(
-                None, # Ingen access token från start
+                None,
                 refresh_token=self.google_refresh_token,
                 token_uri="https://oauth2.googleapis.com/token",
                 client_id=self.google_client_id,
                 client_secret=self.google_client_secret
             )
-            service = build('drive', 'v3', credentials=creds)
-            return service
+            return build('drive', 'v3', credentials=creds)
         except Exception as e:
             LOGGER.error(f"Kunde inte skapa Google Drive-tjänst: {e}")
             return None
 
-    def _get_or_create_nested_folder(self, service, folder_path):
-        """
-        Traverserar och skapar mappar enligt sökväg (t.ex. "Rot/Undermapp/Mapp").
-        Returnerar ID för sista mappen i kedjan.
-        """
-        if not folder_path:
-            return None
-
-        parts = [p.strip() for p in folder_path.split("/") if p.strip()]
-        if not parts:
-            return None
-
-        parent_id = None # Startar i root om None
-
-        for part in parts:
-            folder_id = self._get_or_create_folder(service, part, parent_id)
-            if not folder_id:
-                # Om vi misslyckas på någon nivå kan vi inte fortsätta
-                LOGGER.error(f"Kunde inte hitta/skapa mapp '{part}' i sökvägen.")
-                return None
-            parent_id = folder_id
-
-        return parent_id
-
-    def _get_or_create_folder(self, service, folder_name, parent_id=None):
-        """Hittar en mapp med givet namn (inom parent_id) eller skapar den."""
-        try:
-            query = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and trashed=false"
-            if parent_id:
-                query += f" and '{parent_id}' in parents"
-            else:
-                # Om inget parent_id, sök INTE i hela driven utan (oftast) i root om det inte specas.
-                # Men om man vill hitta en mapp i "Mina filer" (root) så är 'root' in parents implicit om man inte anger något.
-                # För säkerhets skull kan vi anta att om parent_id är None menar vi root eller så låter vi Drive söka överallt.
-                # Men för att bygga struktur är det bäst att inte söka överallt om vi tror det är en undermapp.
-                # I _get_or_create_nested_folder hanteras logiken. Första nivån är parent_id=None -> root?
-                # Egentligen: Om parent_id är None, så söker vi bara på namn. Det kan hitta mappar var som helst.
-                # Men om vi skapar, skapas den i root.
-                pass
-
-            results = service.files().list(q=query, fields="files(id, name)").execute()
-            files = results.get('files', [])
-
-            if files:
-                # Mappen finns, returnera ID
-                return files[0]['id']
-            else:
-                # Mappen finns inte, skapa den
-                file_metadata = {
-                    'name': folder_name,
-                    'mimeType': 'application/vnd.google-apps.folder'
-                }
-                if parent_id:
-                    file_metadata['parents'] = [parent_id]
-
-                folder = service.files().create(body=file_metadata, fields='id').execute()
-                if self.enable_debug:
-                    LOGGER.info(f"Skapade mapp på Drive: {folder_name} (ID: {folder.get('id')})")
-                return folder.get('id')
-
-        except Exception as e:
-            LOGGER.error(f"Fel vid mapphantering ({folder_name}): {e}")
-            return None
-
-    def _upload_to_drive(self, ai_data, attachment_paths):
-        """Laddar upp filer till Google Drive i strukturen Grundmapp/År/Månad."""
-        service = self._get_drive_service()
-        if not service:
-            return []
-
-        # Datumlogik för mappstruktur
+    def _upload_to_drive(self, service, ai_data, attachment_paths):
+        """Laddar upp filer och returnerar (lista_på_filer, year_folder_id)."""
         date_str = ai_data.get("due_date")
         if not date_str:
             date_obj = dt_util.now()
@@ -264,25 +197,21 @@ class ForvaltareProcessor:
         year = date_obj.strftime("%Y")
         month_name = self._get_swedish_month(date_obj.month)
 
-        # 1. Hitta/Skapa hela sökvägen till Grundmappen (t.ex. "Nellie/Förvaltare")
         root_id = self._get_or_create_nested_folder(service, self.drive_folder_path)
         if not root_id:
-            LOGGER.error(f"Kunde inte navigera till målmappen: {self.drive_folder_path}")
-            return []
+            LOGGER.error(f"Kunde inte hitta/skapa: {self.drive_folder_path}")
+            return [], None
 
-        # 2. Hitta/Skapa Årsmapp
         year_id = self._get_or_create_folder(service, year, parent_id=root_id)
         if not year_id:
-            return []
+            return [], None
 
-        # 3. Hitta/Skapa Månadsmapp
         month_id = self._get_or_create_folder(service, month_name, parent_id=year_id)
         if not month_id:
-            return []
+            return [], year_id # Returnera year_id så vi kan spara JSON där ändå?
 
         uploaded_files = []
 
-        # Filnamnskomponenter
         sender = self._sanitize_filename(ai_data.get("sender_name", "Okänd"))
         due_date = date_obj.strftime("%Y-%m-%d")
         inv_no = self._sanitize_filename(ai_data.get("invoice_number", "Saknas"))
@@ -294,7 +223,6 @@ class ForvaltareProcessor:
                 src = Path(src_path)
                 suffix = src.suffix
 
-                # Unikt ID
                 unique_part = ""
                 if ai_unique_id:
                     unique_part += f"_{ai_unique_id}"
@@ -304,27 +232,189 @@ class ForvaltareProcessor:
 
                 new_filename = f"{sender}_{due_date}_{inv_no}_{amount}{unique_part}{suffix}"
 
-                # Ladda upp filen
-                file_metadata = {
-                    'name': new_filename,
-                    'parents': [month_id]
-                }
-                media = MediaFileUpload(src_path, mimetype='application/pdf') # Antag PDF, eller gissa typ
+                file_metadata = {'name': new_filename, 'parents': [month_id]}
+                media = MediaFileUpload(src_path, mimetype='application/pdf')
 
                 file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-
-                if self.enable_debug:
-                    LOGGER.info(f"Laddade upp fil till Drive: {new_filename} (ID: {file.get('id')})")
-
                 uploaded_files.append(new_filename)
 
             except Exception as e:
-                LOGGER.error(f"Kunde inte ladda upp fil {src_path} till Drive: {e}")
+                LOGGER.error(f"Kunde inte ladda upp {src_path}: {e}")
 
-        return uploaded_files
+        return uploaded_files, year_id
+
+    def _process_summary_json(self, service, year_folder_id, ai_data):
+        """Hämtar, uppdaterar och sparar JSON-översikten i årsmappen."""
+        if not self.summary_filename:
+            return
+
+        # 1. Hitta filen
+        query = f"name='{self.summary_filename}' and '{year_folder_id}' in parents and trashed=false"
+        results = service.files().list(q=query, fields="files(id, name)").execute()
+        files = results.get('files', [])
+
+        file_id = None
+        current_data = {"year": "", "total_sum_year": 0.0, "senders": {}}
+
+        if files:
+            file_id = files[0]['id']
+            # Ladda ner innehåll
+            try:
+                request = service.files().get_media(fileId=file_id)
+                fh = io.BytesIO()
+                downloader = MediaIoBaseDownload(fh, request)
+                done = False
+                while done is False:
+                    status, done = downloader.next_chunk()
+
+                fh.seek(0)
+                content = fh.read().decode('utf-8')
+                current_data = json.loads(content)
+            except Exception as e:
+                LOGGER.warning(f"Kunde inte läsa existerande JSON, skapar ny: {e}")
+
+        # 2. Uppdatera data
+        # Säkerställ struktur
+        if "senders" not in current_data:
+            current_data["senders"] = {}
+
+        # Sätt år om det saknas (baserat på fakturan vi behandlar nu)
+        if not current_data.get("year"):
+             # Försök ta år från invoice_date eller due_date
+             d_str = ai_data.get("invoice_date") or ai_data.get("due_date")
+             if d_str:
+                 try:
+                     current_data["year"] = str(datetime.strptime(d_str, "%Y-%m-%d").year)
+                 except:
+                     pass
+
+        sender = ai_data.get("sender_name", "Okänd")
+        if sender not in current_data["senders"]:
+            current_data["senders"][sender] = []
+
+        # Kolla dubbletter (baserat på unique_id eller invoice_number)
+        new_id = ai_data.get("unique_id") or ai_data.get("invoice_number")
+        exists = False
+        if new_id:
+            for item in current_data["senders"][sender]:
+                existing_id = item.get("unique_id") or item.get("invoice_number")
+                if existing_id and existing_id == new_id:
+                    exists = True
+                    break
+
+        if not exists:
+            # Lägg till posten
+            entry = {
+                "type": ai_data.get("type", "Faktura"),
+                "invoice_number": ai_data.get("invoice_number"),
+                "invoice_date": ai_data.get("invoice_date"),
+                "due_date": ai_data.get("due_date"),
+                "amount_str": ai_data.get("total_amount"),
+                "amount": self._parse_amount(ai_data.get("total_amount")),
+                "unique_id": new_id,
+                "summary": ai_data.get("summary"),
+                "description": ai_data.get("description"),
+                "added_at": dt_util.now().isoformat()
+            }
+            current_data["senders"][sender].append(entry)
+
+            # Sortera listan på förfallodatum
+            current_data["senders"][sender].sort(key=lambda x: x.get("due_date") or "9999-99-99")
+
+            # 3. Räkna om totalsumma
+            total = 0.0
+            for s_list in current_data["senders"].values():
+                for item in s_list:
+                    # Dra av om det är kredit?
+                    val = item.get("amount", 0)
+                    if item.get("type", "").lower() == "kreditfaktura":
+                        total -= val
+                    else:
+                        total += val
+            current_data["total_sum_year"] = round(total, 2)
+
+            # 4. Ladda upp igen
+            json_content = json.dumps(current_data, indent=2, ensure_ascii=False)
+            media_body = MediaFileUpload(
+                io.BytesIO(json_content.encode('utf-8')),
+                mimetype='application/json',
+                resumable=True
+            )
+
+            if file_id:
+                # Uppdatera
+                service.files().update(
+                    fileId=file_id,
+                    media_body=media_body
+                ).execute()
+                if self.enable_debug:
+                    LOGGER.info(f"Uppdaterade JSON-fil: {self.summary_filename}")
+            else:
+                # Skapa ny
+                file_metadata = {
+                    'name': self.summary_filename,
+                    'parents': [year_folder_id],
+                    'mimeType': 'application/json'
+                }
+                service.files().create(
+                    body=file_metadata,
+                    media_body=media_body
+                ).execute()
+                if self.enable_debug:
+                    LOGGER.info(f"Skapade ny JSON-fil: {self.summary_filename}")
+
+    def _parse_amount(self, amount_str):
+        """Försöker extrahera ett tal från en sträng (t.ex. '399 kr' -> 399.0)."""
+        if not amount_str:
+            return 0.0
+        try:
+            # Rensa bort allt utom siffror, komma, punkt och minus
+            clean = re.sub(r"[^0-9,.-]", "", str(amount_str))
+            # Byt komma mot punkt
+            clean = clean.replace(",", ".")
+            return float(clean)
+        except Exception:
+            return 0.0
+
+    def _get_or_create_nested_folder(self, service, folder_path):
+        if not folder_path:
+            return None
+        parts = [p.strip() for p in folder_path.split("/") if p.strip()]
+        if not parts:
+            return None
+        parent_id = None
+        for part in parts:
+            folder_id = self._get_or_create_folder(service, part, parent_id)
+            if not folder_id:
+                return None
+            parent_id = folder_id
+        return parent_id
+
+    def _get_or_create_folder(self, service, folder_name, parent_id=None):
+        try:
+            query = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and trashed=false"
+            if parent_id:
+                query += f" and '{parent_id}' in parents"
+
+            results = service.files().list(q=query, fields="files(id, name)").execute()
+            files = results.get('files', [])
+
+            if files:
+                return files[0]['id']
+            else:
+                file_metadata = {
+                    'name': folder_name,
+                    'mimeType': 'application/vnd.google-apps.folder'
+                }
+                if parent_id:
+                    file_metadata['parents'] = [parent_id]
+                folder = service.files().create(body=file_metadata, fields='id').execute()
+                return folder.get('id')
+        except Exception as e:
+            LOGGER.error(f"Fel vid mapphantering ({folder_name}): {e}")
+            return None
 
     def _create_notification(self, ai_data, sender_email, uploaded_files):
-        """Skapar en Persistent Notification i Home Assistant."""
         summary = ai_data.get("summary", "Okänd faktura")
         amount = ai_data.get("total_amount", "? kr")
         sender_name = ai_data.get("sender_name", sender_email)
@@ -333,10 +423,7 @@ class ForvaltareProcessor:
 
         if uploaded_files:
             message += f"\n\nLaddade upp {len(uploaded_files)} filer till Google Drive."
-        else:
-             message += "\n\nVARNING: Inga filer laddades upp (fel eller inga bilagor)."
 
-        # Skicka persistent notification
         self.hass.add_job(
             self.hass.services.async_call(
                 "persistent_notification", "create",
@@ -356,10 +443,8 @@ class ForvaltareProcessor:
         return months[month_number - 1]
 
     def _sanitize_filename(self, text):
-        """Rensa sträng för att använda i filnamn."""
         if not text:
             return "Okand"
-        # Byt ut ogiltiga tecken
         keep = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
         cleaned = "".join(c if c in keep else "_" for c in text)
         return cleaned.strip("_")
