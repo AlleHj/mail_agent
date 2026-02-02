@@ -236,6 +236,8 @@ class ForvaltareProcessor:
                 media = MediaFileUpload(src_path, mimetype='application/pdf')
 
                 file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+                if self.enable_debug:
+                    LOGGER.info(f"Laddade upp fil till Drive: {new_filename} (ID: {file.get('id')})")
                 uploaded_files.append(new_filename)
 
             except Exception as e:
@@ -285,7 +287,7 @@ class ForvaltareProcessor:
              if d_str:
                  try:
                      current_data["year"] = str(datetime.strptime(d_str, "%Y-%m-%d").year)
-                 except:
+                 except (ValueError, TypeError):
                      pass
 
         sender = ai_data.get("sender_name", "Okänd")
