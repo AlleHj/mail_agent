@@ -1,4 +1,4 @@
-![Version](https://img.shields.io/badge/version-0.19.0-blue.svg)
+![Version](https://img.shields.io/badge/version-0.19.1-blue.svg)
 ![Home Assistant](https://img.shields.io/badge/home%20assistant-component-orange.svg)
 
 Mail Agent för Home Assistant
