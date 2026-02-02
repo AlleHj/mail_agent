@@ -10,7 +10,7 @@ from pathlib import Path
 from google import genai
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload, MediaIoBaseUpload
 
 from homeassistant.util import dt as dt_util
 from .const import LOGGER
@@ -337,7 +337,7 @@ class ForvaltareProcessor:
 
             # 4. Ladda upp igen
             json_content = json.dumps(current_data, indent=2, ensure_ascii=False)
-            media_body = MediaFileUpload(
+            media_body = MediaIoBaseUpload(
                 io.BytesIO(json_content.encode('utf-8')),
                 mimetype='application/json',
                 resumable=True
