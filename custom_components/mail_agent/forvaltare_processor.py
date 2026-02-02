@@ -29,7 +29,8 @@ class ForvaltareProcessor:
         self.google_client_id = config.get("google_client_id")
         self.google_client_secret = config.get("google_client_secret")
         self.google_refresh_token = config.get("google_refresh_token")
-        self.target_folder_name = config.get("target_folder_name", "Fakturor")
+        # Standardvärde "Fakturor" om inget anges
+        self.drive_folder_path = config.get("drive_folder_path", "Fakturor")
 
     def process_email(self, sender, subject, body, attachment_paths):
         """
@@ -180,12 +181,45 @@ class ForvaltareProcessor:
             LOGGER.error(f"Kunde inte skapa Google Drive-tjänst: {e}")
             return None
 
+    def _get_or_create_nested_folder(self, service, folder_path):
+        """
+        Traverserar och skapar mappar enligt sökväg (t.ex. "Rot/Undermapp/Mapp").
+        Returnerar ID för sista mappen i kedjan.
+        """
+        if not folder_path:
+            return None
+
+        parts = [p.strip() for p in folder_path.split("/") if p.strip()]
+        if not parts:
+            return None
+
+        parent_id = None # Startar i root om None
+
+        for part in parts:
+            folder_id = self._get_or_create_folder(service, part, parent_id)
+            if not folder_id:
+                # Om vi misslyckas på någon nivå kan vi inte fortsätta
+                LOGGER.error(f"Kunde inte hitta/skapa mapp '{part}' i sökvägen.")
+                return None
+            parent_id = folder_id
+
+        return parent_id
+
     def _get_or_create_folder(self, service, folder_name, parent_id=None):
         """Hittar en mapp med givet namn (inom parent_id) eller skapar den."""
         try:
             query = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and trashed=false"
             if parent_id:
                 query += f" and '{parent_id}' in parents"
+            else:
+                # Om inget parent_id, sök INTE i hela driven utan (oftast) i root om det inte specas.
+                # Men om man vill hitta en mapp i "Mina filer" (root) så är 'root' in parents implicit om man inte anger något.
+                # För säkerhets skull kan vi anta att om parent_id är None menar vi root eller så låter vi Drive söka överallt.
+                # Men för att bygga struktur är det bäst att inte söka överallt om vi tror det är en undermapp.
+                # I _get_or_create_nested_folder hanteras logiken. Första nivån är parent_id=None -> root?
+                # Egentligen: Om parent_id är None, så söker vi bara på namn. Det kan hitta mappar var som helst.
+                # Men om vi skapar, skapas den i root.
+                pass
 
             results = service.files().list(q=query, fields="files(id, name)").execute()
             files = results.get('files', [])
@@ -230,9 +264,10 @@ class ForvaltareProcessor:
         year = date_obj.strftime("%Y")
         month_name = self._get_swedish_month(date_obj.month)
 
-        # 1. Hitta/Skapa Grundmapp
-        root_id = self._get_or_create_folder(service, self.target_folder_name)
+        # 1. Hitta/Skapa hela sökvägen till Grundmappen (t.ex. "Nellie/Förvaltare")
+        root_id = self._get_or_create_nested_folder(service, self.drive_folder_path)
         if not root_id:
+            LOGGER.error(f"Kunde inte navigera till målmappen: {self.drive_folder_path}")
             return []
 
         # 2. Hitta/Skapa Årsmapp

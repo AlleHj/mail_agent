@@ -51,7 +51,7 @@ Logik: Anpassa sökintervall och debug-nivå.
 
 För "Förvaltare"-läget krävs även:
 Google Drive OAuth: Client ID, Client Secret och Refresh Token (för att ladda upp filer utan webbläsar-inloggning).
-Målmapp: Namnet på den mapp i roten av din Drive där fakturor ska sparas (t.ex. "Fakturor").
+Sökväg på Drive: Hela sökvägen till mappen där fakturor ska sparas. Du kan använda undermappar. (t.ex. "Nellie/Förvaltare/Betalningar"). Komponenten skapar automatiskt mappar som saknas.
 
 🛠️ Felsökning
 Sensorerna visar "Unknown"? Vänta till nästa sökintervall eller tvinga en omladdning av integrationen, så kommer de igång.
