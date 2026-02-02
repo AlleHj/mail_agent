@@ -28,7 +28,11 @@
         "title": "Inställningar för Mail Agent",
         "data": {
           "scan_interval": "Sökintervall (sekunder)",
-          "enable_debug": "Aktivera utökad felsökningsloggning"
+          "enable_debug": "Aktivera utökad felsökningsloggning",
+          "google_client_id": "Google Drive Client ID",
+          "google_client_secret": "Google Drive Client Secret",
+          "google_refresh_token": "Google Drive Refresh Token",
+          "drive_folder_path": "Sökväg på Drive (t.ex. Fakturor/2026)"
         }
       }
     }

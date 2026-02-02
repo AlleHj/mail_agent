@@ -1,4 +1,4 @@
-# Version: 0.18.0 - 2025-12-18
+# Version: 0.19.0 - 2026-05-10
 """Konstanter för Mail Agent."""
 import logging
 
@@ -22,6 +22,14 @@ CONF_SMTP_SENDER_NAME = "smtp_sender_name"
 # Options / Logic Type
 CONF_INTERPRETATION_TYPE = "interpretation_type"
 TYPE_KALLELSE = "kallelse"
+TYPE_FORVALTARE = "forvaltare"
+
+# Options / Storage
+CONF_GOOGLE_CLIENT_ID = "google_client_id"
+CONF_GOOGLE_CLIENT_SECRET = "google_client_secret"
+CONF_GOOGLE_REFRESH_TOKEN = "google_refresh_token"
+CONF_DRIVE_FOLDER_PATH = "drive_folder_path"
+CONF_SUMMARY_FILENAME = "summary_filename"
 
 # Options / Gemini
 CONF_SCAN_INTERVAL = "scan_interval"
@@ -48,5 +56,7 @@ DEFAULT_ENABLE_DEBUG = False
 DEFAULT_GEMINI_MODEL = "gemini-3-pro-preview"
 DEFAULT_INTERPRETATION_TYPE = TYPE_KALLELSE
 DEFAULT_SMTP_SENDER_NAME = "Mail Agent"
+DEFAULT_DRIVE_FOLDER_PATH = "Fakturor"
+DEFAULT_SUMMARY_FILENAME = "fakturor_oversikt.json"
 
 LOGGER = logging.getLogger(__package__)

@@ -9,7 +9,10 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://www.hjalmar.com/issues",
   "requirements": [
-    "google-genai"
+    "google-genai",
+    "google-api-python-client",
+    "google-auth",
+    "google-auth-oauthlib"
   ],
   "version": "0.19.0"
 }

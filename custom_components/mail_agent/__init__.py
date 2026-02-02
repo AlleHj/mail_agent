@@ -15,6 +15,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.const import Platform
 
 from .kallelse_processor import KallelseProcessor
+from .forvaltare_processor import ForvaltareProcessor
 
 from .const import (
     DOMAIN,
@@ -28,6 +29,7 @@ from .const import (
     CONF_ENABLE_DEBUG,
     CONF_INTERPRETATION_TYPE,
     TYPE_KALLELSE,
+    TYPE_FORVALTARE,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_ENABLE_DEBUG,
     SIGNAL_MAIL_AGENT_UPDATE,
@@ -94,6 +96,8 @@ class MailAgentScanner:
         self.processor = None
         if self.interpretation_type == TYPE_KALLELSE:
             self.processor = KallelseProcessor(hass, config)
+        elif self.interpretation_type == TYPE_FORVALTARE:
+            self.processor = ForvaltareProcessor(hass, config)
         else:
             LOGGER.warning("Okänd tolkningstyp: %s. Fallback till Kallelse.", self.interpretation_type)
             self.processor = KallelseProcessor(hass, config)
