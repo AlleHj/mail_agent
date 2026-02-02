@@ -1,4 +1,4 @@
-# Version: 0.21.0
+# Version: 0.22.0
 """Processor för att hantera fakturor och förvaltning via Google Drive."""
 
 import json
@@ -115,7 +115,7 @@ class ForvaltareProcessor:
         1. **Typ**: Är detta en "Faktura", "Kreditfaktura" eller annat (t.ex. "Tillgodokvitto")?
         2. **Avsändare**: Vem är det från? (T.ex. Comviq, Skatteverket).
         3. **Datum**:
-           - **Fakturadatum**: När ställdes fakturan ut?
+           - **Fakturadatum**: När ställdes fakturan ut? (Detta styr sorteringen).
            - **Förfallodatum**: När ska den betalas?
            - Om datum saknas, använd dagens datum ({now_str}).
         4. **Belopp**: Totalsumma (inkludera valuta, t.ex. "399,00 kr"). Var noga med valören.
@@ -127,8 +127,7 @@ class ForvaltareProcessor:
            - **Betalsätt**: Plusgiro, Bankgiro eller annat.
         7. **Kontakt**:
            - **Telefon**: Telefonnummer till avsändaren om det finns.
-        8. **Unikt ID**: Identifiera ett unikt nummer (helst OCR eller Fakturanummer).
-        9. **Beskrivning**: En kortfattad text om vad det gäller.
+        8. **Beskrivning**: En kortfattad text om vad det gäller.
 
         Om du inte hittar ett värde, sätt det till "okänt" (eller "0" för belopp).
 
@@ -145,7 +144,6 @@ class ForvaltareProcessor:
             "customer_number": "Nummer/okänt",
             "payment_method": "BG/PG/okänt",
             "phone_number": "Nummer/okänt",
-            "unique_id": "UniktID",
             "summary": "Kort rubrik",
             "description": "Beskrivning"
         }}
@@ -197,13 +195,14 @@ class ForvaltareProcessor:
 
     def _upload_to_drive(self, service, ai_data, attachment_paths):
         """Laddar upp filer och returnerar (lista_på_filer, year_folder_id)."""
-        date_str = ai_data.get("due_date")
-        if not date_str:
+        # Datumlogik: Fakturadatum -> Förfallodatum -> Idag
+        date_str = ai_data.get("invoice_date") or ai_data.get("due_date")
+        if not date_str or date_str.lower() == "okänt":
             date_obj = dt_util.now()
         else:
             try:
                 date_obj = datetime.strptime(date_str, "%Y-%m-%d")
-            except ValueError:
+            except (ValueError, TypeError):
                 date_obj = dt_util.now()
 
         year = date_obj.strftime("%Y")
@@ -246,7 +245,6 @@ class ForvaltareProcessor:
                 suffix = src.suffix
 
                 # Format: [avsändare]_Fakturadatum [datum1] Förfallodatum [datum2] Fakturnr [fakturanr] OCR [OCR] Kundnr [kundnr] Summa [Summa].pdf
-                # Hantera index om flera filer
                 idx_part = ""
                 if len(attachment_paths) > 1:
                     idx_part = f"_{idx+1}"
@@ -307,41 +305,51 @@ class ForvaltareProcessor:
             except Exception as e:
                 LOGGER.warning(f"Kunde inte läsa existerande JSON, skapar ny: {e}")
 
-        # 2. Uppdatera data - Svenska nycklar
+        # 2. Uppdatera data
         if "avsändare" not in current_data:
             current_data["avsändare"] = {}
 
-        # Sätt år
+        # Sätt år baserat på fakturadatum (som också styr vilken årsmapp vi är i)
+        d_str = ai_data.get("invoice_date") or ai_data.get("due_date")
+        if d_str and d_str.lower() != "okänt":
+             try:
+                 current_data["år"] = str(datetime.strptime(d_str, "%Y-%m-%d").year)
+             except (ValueError, TypeError):
+                 # Fallback: om filen redan har ett år, behåll det. Annars dagens år?
+                 pass
         if not current_data.get("år"):
-             d_str = ai_data.get("invoice_date") or ai_data.get("due_date")
-             if d_str:
-                 try:
-                     current_data["år"] = str(datetime.strptime(d_str, "%Y-%m-%d").year)
-                 except (ValueError, TypeError):
-                     pass
+             current_data["år"] = str(dt_util.now().year)
 
         sender = ai_data.get("sender_name", "Okänd")
         if sender not in current_data["avsändare"]:
             current_data["avsändare"][sender] = []
 
-        # Dubblettkontroll (Svenska nycklar)
-        # Vi letar efter unikt_id eller fakturanummer
-        new_unique_id = ai_data.get("unique_id") or ai_data.get("invoice_number")
+        # Dubblettkontroll (Använd fakturanummer eller OCR som unik identifierare)
+        new_inv = ai_data.get("invoice_number", "okänt")
+        new_ocr = ai_data.get("ocr_number", "okänt")
 
-        # Fallback om unikt id saknas: generera hash av summary + datum
-        if not new_unique_id or new_unique_id == "okänt":
-             raw = f"{ai_data.get('summary')}{ai_data.get('due_date')}"
-             new_unique_id = str(hash(raw))
+        # Fallback ID för kontroll
+        check_id = new_inv if new_inv != "okänt" else new_ocr
+        if check_id == "okänt":
+             # Om både fakturanr och ocr saknas, använd hash av summary+datum
+             raw = f"{ai_data.get('summary')}{ai_data.get('invoice_date')}"
+             check_id = str(hash(raw))
 
         exists = False
         for item in current_data["avsändare"][sender]:
-            existing_id = item.get("unikt_id")
-            if existing_id and existing_id == new_unique_id:
-                exists = True
-                break
+            # Jämför mot fakturanummer eller ocr i listan
+            existing_inv = item.get("fakturanummer", "okänt")
+            existing_ocr = item.get("ocr", "okänt")
+
+            # Matchning?
+            if (existing_inv != "okänt" and existing_inv == new_inv) or \
+               (existing_ocr != "okänt" and existing_ocr == new_ocr) or \
+               (item.get("unikt_id") == check_id): # För bakåtkompatibilitet eller fallback
+                 exists = True
+                 break
 
         if not exists:
-            # Skapa posten med svenska nycklar
+            # Skapa posten
             entry = {
                 "typ": ai_data.get("type", "Faktura"),
                 "fakturanummer": ai_data.get("invoice_number", "okänt"),
@@ -353,13 +361,13 @@ class ForvaltareProcessor:
                 "betalsätt": ai_data.get("payment_method", "okänt"),
                 "telefon": ai_data.get("phone_number", "okänt"),
                 "beskrivning": ai_data.get("description", ""),
-                "unikt_id": new_unique_id,
+                "unikt_id": check_id, # Sparar ID för intern koll, men använder svenska nycklar i övrigt
                 "tillagd": dt_util.now().isoformat()
             }
             current_data["avsändare"][sender].append(entry)
 
-            # Sortera på förfallodatum
-            current_data["avsändare"][sender].sort(key=lambda x: x.get("förfallodatum") or "9999-99-99")
+            # Sortera på fakturadatum
+            current_data["avsändare"][sender].sort(key=lambda x: x.get("fakturadatum") or "9999-99-99")
 
             # 3. Räkna om totalsumma
             total = 0.0
@@ -461,7 +469,6 @@ class ForvaltareProcessor:
         if uploaded_files:
             message += f"\n\nLaddade upp {len(uploaded_files)} filer till Google Drive."
         elif uploaded_files is not None and len(uploaded_files) == 0:
-             # Om uploaded_files är tom list men inte None, betyder det att vi försökte men ingen ny fil skapades (t.ex. dubblett)
              message += "\n\nInga nya filer laddades upp (dubbletter eller fel)."
 
         self.hass.add_job(
