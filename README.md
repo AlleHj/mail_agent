@@ -2,7 +2,6 @@
 ![Home Assistant](https://img.shields.io/badge/home%20assistant-component-orange.svg)
 
 Mail Agent för Home Assistant
-Version: 0.19.0
 
 Mail Agent är en intelligent "Custom Component" för Home Assistant som automatiserar hanteringen av inkommande post. Genom att kombinera Google Gemini (Generativ AI) med traditionell e-posthantering (IMAP/SMTP), fungerar komponenten som en smart sekreterare eller förvaltare som läser dina mail, förstår innehållet (inklusive bilagor) och agerar därefter.
 
