@@ -1,4 +1,4 @@
-# Fil: custom_components/mail_agent/config_flow.py | Version: 0.22.0
+# Fil: custom_components/mail_agent/config_flow.py | Version: 0.23.0
 """Config flow för Mail Agent integration."""
 
 import voluptuous as vol
@@ -93,7 +93,8 @@ class MailAgentConfigFlow(AbstractOAuth2FlowHandler, domain=DOMAIN):
     async def async_step_config(self, user_input: dict | None = None) -> ConfigFlowResult:
         """Handle the configuration step after OAuth."""
         if user_input is not None:
-            title = self.flow_impl.name
+            # Set title to sender name or default
+            title = user_input.get(CONF_SENDER_NAME, self.flow_impl.name)
             return self.async_create_entry(
                 title=title,
                 data=self._oauth_data,

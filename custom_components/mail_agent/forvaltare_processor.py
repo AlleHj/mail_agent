@@ -1,9 +1,10 @@
-# Fil: custom_components/mail_agent/forvaltare_processor.py | Version: 0.21.0
+# Fil: custom_components/mail_agent/forvaltare_processor.py | Version: 0.23.0
 """Processor för att hantera fakturor och förvaltning via Google Drive."""
 
 import json
 import io
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -44,6 +45,9 @@ class ForvaltareProcessor:
         try:
             # 1. Anropa AI
             ai_data = self._call_gemini(attachment_paths, subject, body)
+
+            if not ai_data:
+                return None
 
             if isinstance(ai_data, list):
                 if len(ai_data) > 0:
@@ -149,29 +153,42 @@ class ForvaltareProcessor:
 
         contents = uploaded_files + [prompt]
 
-        try:
-            response = client.models.generate_content(
-                model=self.gemini_model,
-                contents=contents,
-                config={'response_mime_type': 'application/json'}
-            )
+        # Retry logic for 503 UNAVAILABLE
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model=self.gemini_model,
+                    contents=contents,
+                    config={'response_mime_type': 'application/json'}
+                )
 
-            for f in uploaded_files:
-                try:
-                    client.files.delete(name=f.name)
-                except Exception:
-                    pass
+                for f in uploaded_files:
+                    try:
+                        client.files.delete(name=f.name)
+                    except Exception:
+                        pass
 
-            return json.loads(response.text)
+                return json.loads(response.text)
 
-        except Exception as e:
-            LOGGER.error(f"Fel vid AI-anrop: {e}")
-            for f in uploaded_files:
-                try:
-                    client.files.delete(name=f.name)
-                except Exception:
-                    pass
-            return {}
+            except Exception as e:
+                # Check for 503 or overload errors
+                if "503" in str(e) or "overloaded" in str(e).lower():
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 2
+                        LOGGER.warning(f"Gemini 503 Unavailable. Försök {attempt + 1}/{max_retries}. Väntar {wait_time}s...")
+                        time.sleep(wait_time)
+                        continue
+
+                LOGGER.error(f"Fel vid AI-anrop (försök {attempt+1}): {e}")
+                for f in uploaded_files:
+                    try:
+                        client.files.delete(name=f.name)
+                    except Exception:
+                        pass
+                return None
+
+        return None
 
     def _upload_to_drive(self, service, ai_data, attachment_paths):
         """Laddar upp filer och returnerar (lista_på_filer, year_folder_id)."""

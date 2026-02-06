@@ -1,4 +1,4 @@
-# Fil: custom_components/mail_agent/__init__.py | Version: 0.23.0
+# Fil: custom_components/mail_agent/__init__.py | Version: 0.24.0
 """Mail Agent - Huvudlogik med Global Låsning, Sensorstöd och Restore."""
 
 import base64
@@ -250,8 +250,8 @@ class MailAgentScanner:
             return
 
         try:
-            # Construct query: to:{target_email} -label:{LABEL_AI_HANDLED}
-            query = f"to:{self.target_email} -label:{LABEL_AI_HANDLED}"
+            # Construct query: to:"{target_email}" -label:{LABEL_AI_HANDLED}
+            query = f'to:"{self.target_email}" -label:{LABEL_AI_HANDLED}'
 
             if self.enable_debug:
                 LOGGER.info(f"Söker med query: {query}")
@@ -268,11 +268,16 @@ class MailAgentScanner:
                 self.hass.add_job(self._notify_update)
                 return
 
+            total_messages = len(messages)
             if self.enable_debug:
-                LOGGER.info("Hittade %s antal mail.", len(messages))
+                LOGGER.info("Hittade %s nya mail som matchar filter.", total_messages)
 
-            for msg_meta in messages:
+            for idx, msg_meta in enumerate(messages):
                 msg_id = msg_meta['id']
+
+                if self.enable_debug:
+                    LOGGER.info(f"Bearbetar mail {idx + 1}/{total_messages}...")
+
                 try:
                     # Hämta hela mailet
                     msg_data = self.gmail_service.users().messages().get(userId='me', id=msg_id, format='full').execute()
