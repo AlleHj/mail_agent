@@ -2,8 +2,6 @@
 """Mail Agent - Huvudlogik med Global Låsning, Sensorstöd och Restore."""
 
 import base64
-import email
-from email.header import decode_header
 from pathlib import Path
 from datetime import timedelta
 

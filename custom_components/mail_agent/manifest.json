@@ -5,12 +5,12 @@
     "@AlleHj"
   ],
   "config_flow": true,
-  "documentation": "https://www.hjalmar.com",
-  "iot_class": "cloud_polling",
-  "issue_tracker": "https://www.hjalmar.com/issues",
   "dependencies": [
     "application_credentials"
   ],
+  "documentation": "https://www.hjalmar.com",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://www.hjalmar.com/issues",
   "requirements": [
     "google-genai",
     "google-api-python-client",
