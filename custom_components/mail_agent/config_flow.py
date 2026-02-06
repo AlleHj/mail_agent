@@ -35,6 +35,7 @@ from .const import (
     CONF_DRIVE_FOLDER_PATH,
     CONF_SUMMARY_FILENAME,
     CONF_SENDER_NAME,
+    CONF_TARGET_EMAIL,
     TYPE_KALLELSE,
     TYPE_FORVALTARE,
     DEFAULT_SCAN_INTERVAL,
@@ -92,12 +93,6 @@ class MailAgentConfigFlow(AbstractOAuth2FlowHandler, domain=DOMAIN):
     async def async_step_config(self, user_input: dict | None = None) -> ConfigFlowResult:
         """Handle the configuration step after OAuth."""
         if user_input is not None:
-            # Merge OAuth data with user input options
-            # Vi lagrar user_input i options för enkelhetens skull, eller i data om det är anslutningsrelaterat
-            # Men i detta fall är det mest inställningar.
-            # config_entries förväntar sig 'data' och 'options'.
-            # AbstractOAuth2FlowHandler sparar auth-data i 'data'.
-
             title = self.flow_impl.name
             return self.async_create_entry(
                 title=title,
@@ -138,6 +133,9 @@ class MailAgentConfigFlow(AbstractOAuth2FlowHandler, domain=DOMAIN):
 
         # Default values
         options_schema = vol.Schema({
+            # Email Target (Required for strict filtering)
+            vol.Required(CONF_TARGET_EMAIL): str,
+
             # Logic Type
             vol.Optional(CONF_INTERPRETATION_TYPE, default=DEFAULT_INTERPRETATION_TYPE): type_selector,
 
@@ -178,9 +176,6 @@ class MailAgentConfigFlow(AbstractOAuth2FlowHandler, domain=DOMAIN):
 
 
 class MailAgentOptionsFlowHandler(OptionsFlow):
-    # OBS: Vi tar bort __init__ helt eftersom OptionsFlow hanterar config_entry internt.
-    # config_entry nås via self.config_entry (property).
-
     async def async_step_init(self, user_input=None) -> ConfigFlowResult:
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
@@ -219,6 +214,9 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
         )
 
         options_schema = vol.Schema({
+            # Email Target
+            vol.Required(CONF_TARGET_EMAIL, default=options.get(CONF_TARGET_EMAIL, "")): str,
+
             # Logic Type
             vol.Optional(CONF_INTERPRETATION_TYPE, default=options.get(CONF_INTERPRETATION_TYPE, DEFAULT_INTERPRETATION_TYPE)): type_selector,
 

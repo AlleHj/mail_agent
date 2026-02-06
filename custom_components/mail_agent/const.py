@@ -1,4 +1,4 @@
-# Version: 0.21.0
+# Version: 0.22.0
 """Konstanter för Mail Agent."""
 import logging
 
@@ -13,6 +13,9 @@ OAUTH2_SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/drive.file",
 ]
+
+# Labels
+LABEL_AI_HANDLED = "AI-HANTERAD"
 
 # Options / Logic Type
 CONF_INTERPRETATION_TYPE = "interpretation_type"
@@ -39,6 +42,7 @@ CONF_EMAIL_RECIPIENT_2 = "email_recipient_2"
 CONF_NOTIFY_SERVICE_1 = "notify_service_1"
 CONF_NOTIFY_SERVICE_2 = "notify_service_2"
 CONF_SENDER_NAME = "sender_name"
+CONF_TARGET_EMAIL = "target_email"
 
 # Defaults
 DEFAULT_SCAN_INTERVAL = 60

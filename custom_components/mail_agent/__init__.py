@@ -1,4 +1,4 @@
-# Fil: custom_components/mail_agent/__init__.py | Version: 0.21.0
+# Fil: custom_components/mail_agent/__init__.py | Version: 0.22.0
 """Mail Agent - Huvudlogik med Global Låsning, Sensorstöd och Restore."""
 
 import base64
@@ -25,11 +25,13 @@ from .const import (
     CONF_SCAN_INTERVAL,
     CONF_ENABLE_DEBUG,
     CONF_INTERPRETATION_TYPE,
+    CONF_TARGET_EMAIL,
     TYPE_KALLELSE,
     TYPE_FORVALTARE,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_ENABLE_DEBUG,
     SIGNAL_MAIL_AGENT_UPDATE,
+    LABEL_AI_HANDLED,
 )
 
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR]
@@ -95,6 +97,7 @@ class MailAgentScanner:
         self.scan_interval = config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
         self.enable_debug = config.get(CONF_ENABLE_DEBUG, DEFAULT_ENABLE_DEBUG)
         self.interpretation_type = config.get(CONF_INTERPRETATION_TYPE, TYPE_KALLELSE)
+        self.target_email = config.get(CONF_TARGET_EMAIL)
 
         self.processor = None
         if self.interpretation_type == TYPE_KALLELSE:
@@ -120,6 +123,7 @@ class MailAgentScanner:
         # Services (Initieras vid scan)
         self.gmail_service = None
         self.drive_service = None
+        self.label_id_handled = None
 
     @property
     def is_scanning(self):
@@ -172,8 +176,9 @@ class MailAgentScanner:
             # Vi bygger services i executor för att undvika blockering vid discovery (om cache saknas)
             def _build_services():
                 self.gmail_service = build("gmail", "v1", credentials=creds, cache_discovery=False)
-                # Vi bygger alltid Drive-tjänsten om det är Förvaltare, eller om vi vill ha generellt stöd
                 self.drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
+                # Ensure label exists
+                self._ensure_label_exists()
 
             await self.hass.async_add_executor_job(_build_services)
 
@@ -193,6 +198,49 @@ class MailAgentScanner:
         """Skicka signal till sensorerna att data har ändrats."""
         async_dispatcher_send(self.hass, f"{SIGNAL_MAIL_AGENT_UPDATE}_{self.entry_id}")
 
+    def _ensure_label_exists(self):
+        """Kontrollera om etiketten finns, annars skapa den."""
+        if self.label_id_handled:
+            return
+
+        try:
+            results = self.gmail_service.users().labels().list(userId='me').execute()
+            labels = results.get('labels', [])
+
+            for label in labels:
+                if label['name'].upper() == LABEL_AI_HANDLED.upper():
+                    self.label_id_handled = label['id']
+                    if self.enable_debug:
+                        LOGGER.debug(f"Hittade etikett {LABEL_AI_HANDLED} med ID: {self.label_id_handled}")
+                    return
+
+            # Skapa om den inte finns
+            label_object = {
+                'name': LABEL_AI_HANDLED,
+                'labelListVisibility': 'labelShow',
+                'messageListVisibility': 'show'
+            }
+            created_label = self.gmail_service.users().labels().create(userId='me', body=label_object).execute()
+            self.label_id_handled = created_label['id']
+            LOGGER.info(f"Skapade ny etikett {LABEL_AI_HANDLED} med ID: {self.label_id_handled}")
+
+        except Exception as e:
+            LOGGER.error(f"Kunde inte hantera etiketten {LABEL_AI_HANDLED}: {e}")
+
+    def _tag_message_as_handled(self, msg_id):
+        """Lägg till etiketten AI-HANTERAD på ett meddelande."""
+        if not self.label_id_handled:
+            LOGGER.warning("Kan inte tagga meddelande, label ID saknas.")
+            return
+
+        try:
+            body = {'addLabelIds': [self.label_id_handled]}
+            self.gmail_service.users().messages().modify(userId='me', id=msg_id, body=body).execute()
+            if self.enable_debug:
+                LOGGER.debug(f"Taggade meddelande {msg_id} som {LABEL_AI_HANDLED}")
+        except Exception as e:
+            LOGGER.error(f"Fel vid taggning av meddelande {msg_id}: {e}")
+
     def _check_mail_sync(self):
         """Synkron logik för att hämta mail via Gmail API."""
         if not self.gmail_service:
@@ -200,9 +248,22 @@ class MailAgentScanner:
             return
 
         try:
-            # Hämta olästa meddelanden
-            # q='is:unread' hämtar alla olästa.
-            results = self.gmail_service.users().messages().list(userId='me', q='is:unread').execute()
+            # Construct query: to:{target_email} -label:{LABEL_AI_HANDLED}
+            # Note: Gmail search is case-insensitive for 'to', but strict for labels usually (though we use ID for modify, query uses name).
+            # If target_email is not set, we default to just checking unhandled (risky if many aliases).
+            query_parts = [f"-label:{LABEL_AI_HANDLED}"]
+
+            if self.target_email:
+                query_parts.append(f"to:{self.target_email}")
+            else:
+                LOGGER.warning("Ingen target_email konfigurerad. Söker på ALLA mail som saknar etikett. Detta kan vara osäkert.")
+
+            query = " ".join(query_parts)
+
+            if self.enable_debug:
+                LOGGER.debug(f"Söker mail med query: '{query}'")
+
+            results = self.gmail_service.users().messages().list(userId='me', q=query).execute()
             messages = results.get('messages', [])
 
             if not self._is_connected:
@@ -215,7 +276,7 @@ class MailAgentScanner:
                 return
 
             if self.enable_debug:
-                LOGGER.info("Hittade %s nya mail.", len(messages))
+                LOGGER.info("Hittade %s nya mail som matchar filter.", len(messages))
 
             for msg_meta in messages:
                 msg_id = msg_meta['id']
@@ -225,10 +286,8 @@ class MailAgentScanner:
 
                     self._process_single_gmail(msg_data)
 
-                    # Markera som läst (ta bort UNREAD label)
-                    self.gmail_service.users().messages().modify(
-                        userId='me', id=msg_id, body={'removeLabelIds': ['UNREAD']}
-                    ).execute()
+                    # Tagga som hanterad oavsett utfall för att undvika loop
+                    self._tag_message_as_handled(msg_id)
 
                 except Exception as e:
                     LOGGER.error("Fel vid bearbetning av mail ID %s: %s", msg_id, e)
@@ -274,8 +333,6 @@ class MailAgentScanner:
             elif self.interpretation_type == TYPE_FORVALTARE:
                 service_arg = self.drive_service
 
-            # Vi antar att processorerna uppdateras för att ta emot en extra parameter (service)
-            # eller så passar vi den via kwargs om vi vill vara bakåtkompatibla (men vi skriver om dem nu).
             result = self.processor.process_email(sender, subject, body, attachment_paths, service=service_arg)
 
             if result and result.get("summary"):
