@@ -6,7 +6,8 @@
   ],
   "config_flow": true,
   "dependencies": [
-    "application_credentials"
+    "application_credentials",
+    "http"
   ],
   "documentation": "https://www.hjalmar.com",
   "iot_class": "cloud_polling",
@@ -17,5 +18,5 @@
     "google-auth",
     "google-auth-oauthlib"
   ],
-  "version": "0.21.0"
+  "version": "0.22.0"
 }
