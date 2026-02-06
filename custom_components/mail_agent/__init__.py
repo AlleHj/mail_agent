@@ -1,7 +1,8 @@
-# Fil: custom_components/mail_agent/__init__.py | Version: 0.22.0
+# Fil: custom_components/mail_agent/__init__.py | Version: 0.23.0
 """Mail Agent - Huvudlogik med Global Låsning, Sensorstöd och Restore."""
 
 import base64
+import time
 from pathlib import Path
 from datetime import timedelta
 
@@ -35,6 +36,7 @@ from .const import (
 )
 
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR]
+PROCESS_DELAY = 3  # Sekunder att vänta mellan varje mail
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Setup."""
@@ -249,19 +251,10 @@ class MailAgentScanner:
 
         try:
             # Construct query: to:{target_email} -label:{LABEL_AI_HANDLED}
-            # Note: Gmail search is case-insensitive for 'to', but strict for labels usually (though we use ID for modify, query uses name).
-            # If target_email is not set, we default to just checking unhandled (risky if many aliases).
-            query_parts = [f"-label:{LABEL_AI_HANDLED}"]
-
-            if self.target_email:
-                query_parts.append(f"to:{self.target_email}")
-            else:
-                LOGGER.warning("Ingen target_email konfigurerad. Söker på ALLA mail som saknar etikett. Detta kan vara osäkert.")
-
-            query = " ".join(query_parts)
+            query = f"to:{self.target_email} -label:{LABEL_AI_HANDLED}"
 
             if self.enable_debug:
-                LOGGER.debug(f"Söker mail med query: '{query}'")
+                LOGGER.info(f"Söker med query: {query}")
 
             results = self.gmail_service.users().messages().list(userId='me', q=query).execute()
             messages = results.get('messages', [])
@@ -276,7 +269,7 @@ class MailAgentScanner:
                 return
 
             if self.enable_debug:
-                LOGGER.info("Hittade %s nya mail som matchar filter.", len(messages))
+                LOGGER.info("Hittade %s antal mail.", len(messages))
 
             for msg_meta in messages:
                 msg_id = msg_meta['id']
@@ -291,6 +284,11 @@ class MailAgentScanner:
 
                 except Exception as e:
                     LOGGER.error("Fel vid bearbetning av mail ID %s: %s", msg_id, e)
+
+                # Throttle
+                if self.enable_debug:
+                    LOGGER.info(f"Väntar {PROCESS_DELAY} sekunder...")
+                time.sleep(PROCESS_DELAY)
 
             self._last_scan_success = dt_util.now()
 
