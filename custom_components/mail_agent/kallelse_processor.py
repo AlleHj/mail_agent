@@ -1,8 +1,9 @@
-# Fil: custom_components/mail_agent/kallelse_processor.py | Version: 0.21.0
+# Fil: custom_components/mail_agent/kallelse_processor.py | Version: 0.23.0
 """Processor för att tolka kallelser och bokningar."""
 
 import json
 import base64
+import time
 import mimetypes
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -52,6 +53,9 @@ class KallelseProcessor:
         try:
             # 1. Anropa AI
             ai_data = self._call_gemini(attachment_paths, subject, body)
+
+            if not ai_data:
+                return None
 
             # Hantera lista från AI
             if isinstance(ai_data, list):
@@ -123,17 +127,43 @@ class KallelseProcessor:
         """
 
         contents = uploaded_files + [prompt]
-        response = client.models.generate_content(
-            model=self.gemini_model, contents=contents, config={'response_mime_type': 'application/json'}
-        )
 
-        for f in uploaded_files:
+        # Retry logic for 503 UNAVAILABLE
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                client.files.delete(name=f.name)
-            except Exception:
-                pass
+                response = client.models.generate_content(
+                    model=self.gemini_model, contents=contents, config={'response_mime_type': 'application/json'}
+                )
 
-        return json.loads(response.text)
+                # Cleanup files
+                for f in uploaded_files:
+                    try:
+                        client.files.delete(name=f.name)
+                    except Exception:
+                        pass
+
+                return json.loads(response.text)
+
+            except Exception as e:
+                # Check for 503 or overload errors
+                if "503" in str(e) or "overloaded" in str(e).lower():
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 2  # 2s, 4s, 6s...
+                        LOGGER.warning(f"Gemini 503 Unavailable. Försök {attempt + 1}/{max_retries}. Väntar {wait_time}s...")
+                        time.sleep(wait_time)
+                        continue
+
+                # If other error or max retries reached, clean up and raise/return empty
+                LOGGER.error(f"Fel vid anrop till Gemini (försök {attempt+1}): {e}")
+                for f in uploaded_files:
+                    try:
+                        client.files.delete(name=f.name)
+                    except Exception:
+                        pass
+                return None
+
+        return None
 
     def _create_calendar_events(self, ai_data):
         calendars = [c for c in [self.cal1, self.cal2] if c]
