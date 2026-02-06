@@ -1,4 +1,4 @@
-# Fil: custom_components/mail_agent/forvaltare_processor.py | Version: 0.23.0
+# Fil: custom_components/mail_agent/forvaltare_processor.py | Version: 0.24.0
 """Processor för att hantera fakturor och förvaltning via Google Drive."""
 
 import json
@@ -67,24 +67,24 @@ class ForvaltareProcessor:
             })
 
             # 2. Ladda upp filer till Drive (eller förbered mappar för JSON)
-            uploaded_files = []
+            uploaded_files_info = [] # Lista med dicts {name, link}
             year_folder_id = None
 
             if service:
                 # Vi kör alltid detta för att få year_folder_id till JSON, även utan bilagor
-                uploaded_files, year_folder_id = self._upload_to_drive(service, ai_data, attachment_paths)
+                uploaded_files_info, year_folder_id = self._upload_to_drive(service, ai_data, attachment_paths)
             else:
                 LOGGER.warning("Ingen Drive-tjänst tillgänglig.")
 
             # 3. Uppdatera Översikts-JSON
             if service and year_folder_id:
                 try:
-                    self._process_summary_json(service, year_folder_id, ai_data)
+                    self._process_summary_json(service, year_folder_id, ai_data, uploaded_files_info)
                 except Exception as e:
                     LOGGER.error(f"Kunde inte uppdatera översiktsfilen: {e}")
 
             # 4. Notifiera
-            self._create_notification(ai_data, sender, uploaded_files)
+            self._create_notification(ai_data, sender, uploaded_files_info)
 
             return ai_data
 
@@ -191,7 +191,7 @@ class ForvaltareProcessor:
         return None
 
     def _upload_to_drive(self, service, ai_data, attachment_paths):
-        """Laddar upp filer och returnerar (lista_på_filer, year_folder_id)."""
+        """Laddar upp filer och returnerar (lista_med_info, year_folder_id)."""
         # Datumlogik: Fakturadatum -> Förfallodatum -> Idag
         date_str = ai_data.get("invoice_date") or ai_data.get("due_date")
         if not date_str or date_str.lower() == "okänt":
@@ -218,7 +218,7 @@ class ForvaltareProcessor:
         if not month_id:
             return [], year_id
 
-        uploaded_files = []
+        uploaded_info = []
 
         # Hämta data för filnamn
         sender = self._sanitize_filename(ai_data.get("sender_name", "okänt"))
@@ -253,25 +253,35 @@ class ForvaltareProcessor:
 
                 # KONTROLLERA DUBBLETT
                 query = f"name = '{new_filename}' and '{month_id}' in parents and trashed = false"
-                existing = service.files().list(q=query, fields="files(id)").execute()
+                existing = service.files().list(q=query, fields="files(id, webViewLink)").execute()
                 if existing.get('files'):
                     LOGGER.info(f"Filen '{new_filename}' finns redan på Drive. Hoppar över uppladdning.")
+                    # Lägg till existerande fil till info om vi vill länka den
+                    f_obj = existing.get('files')[0]
+                    uploaded_info.append({
+                        "name": new_filename,
+                        "link": f_obj.get("webViewLink", "")
+                    })
                     continue
 
                 file_metadata = {'name': new_filename, 'parents': [month_id]}
                 media = MediaFileUpload(src_path, mimetype='application/pdf')
 
-                file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+                file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
                 if self.enable_debug:
                     LOGGER.info(f"Laddade upp fil till Drive: {new_filename} (ID: {file.get('id')})")
-                uploaded_files.append(new_filename)
+
+                uploaded_info.append({
+                    "name": new_filename,
+                    "link": file.get("webViewLink", "")
+                })
 
             except Exception as e:
                 LOGGER.error(f"Kunde inte ladda upp {src_path}: {e}")
 
-        return uploaded_files, year_id
+        return uploaded_info, year_id
 
-    def _process_summary_json(self, service, year_folder_id, ai_data):
+    def _process_summary_json(self, service, year_folder_id, ai_data, uploaded_files_info):
         """Hämtar, uppdaterar och sparar JSON-översikten i årsmappen med svenska nycklar och statistik."""
         if not self.summary_filename:
             return
@@ -360,6 +370,11 @@ class ForvaltareProcessor:
                  exists = True
                  break
 
+        # Hämta länk från första filen om den finns
+        file_link = ""
+        if uploaded_files_info:
+            file_link = uploaded_files_info[0].get("link", "")
+
         if not exists:
             entry = {
                 "typ": ai_data.get("type", "Faktura"),
@@ -373,7 +388,8 @@ class ForvaltareProcessor:
                 "telefon": ai_data.get("phone_number", "okänt"),
                 "beskrivning": ai_data.get("description", ""),
                 "unikt_id": check_id,
-                "tillagd": dt_util.now().isoformat()
+                "tillagd": dt_util.now().isoformat(),
+                "länk": file_link
             }
             fakturor_lista.append(entry)
             fakturor_lista.sort(key=lambda x: x.get("fakturadatum") or "9999-99-99")
@@ -487,16 +503,16 @@ class ForvaltareProcessor:
             LOGGER.error(f"Fel vid mapphantering ({folder_name}): {e}")
             return None
 
-    def _create_notification(self, ai_data, sender_email, uploaded_files):
+    def _create_notification(self, ai_data, sender_email, uploaded_files_info):
         summary = ai_data.get("summary", "Okänd faktura")
         amount = ai_data.get("total_amount", "? kr")
         sender_name = ai_data.get("sender_name", sender_email)
 
         message = f"Faktura från {sender_name} hanterad.\nInfo: {summary}\nSumma: {amount}"
 
-        if uploaded_files:
-            message += f"\n\nLaddade upp {len(uploaded_files)} filer till Google Drive."
-        elif uploaded_files is not None and len(uploaded_files) == 0:
+        if uploaded_files_info:
+            message += f"\n\nLaddade upp {len(uploaded_files_info)} filer till Google Drive."
+        elif uploaded_files_info is not None and len(uploaded_files_info) == 0:
              message += "\n\nInga nya filer laddades upp (dubbletter eller fel)."
 
         self.hass.add_job(
