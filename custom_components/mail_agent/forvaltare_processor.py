@@ -1,4 +1,4 @@
-# Version: 0.23.0
+# Fil: custom_components/mail_agent/forvaltare_processor.py | Version: 0.21.0
 """Processor för att hantera fakturor och förvaltning via Google Drive."""
 
 import json
@@ -8,8 +8,6 @@ from datetime import datetime
 from pathlib import Path
 
 from google import genai
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload, MediaIoBaseUpload
 
 from homeassistant.util import dt as dt_util
@@ -28,15 +26,14 @@ class ForvaltareProcessor:
         self.enable_debug = config.get("enable_debug")
 
         # Google Drive Konfiguration
-        self.google_client_id = config.get("google_client_id")
-        self.google_client_secret = config.get("google_client_secret")
-        self.google_refresh_token = config.get("google_refresh_token")
+        # Auth sköts nu centralt i __init__.py
         self.drive_folder_path = config.get("drive_folder_path", "Fakturor")
         self.summary_filename = config.get("summary_filename", "fakturor_oversikt.json")
 
-    def process_email(self, sender, subject, body, attachment_paths):
+    def process_email(self, sender, subject, body, attachment_paths, service=None):
         """
         Huvudmetod som anropas från MailAgentScanner.
+        service: Ett autentiserat Google Drive Resource objekt.
         """
 
         if not self.gemini_api_key:
@@ -69,11 +66,11 @@ class ForvaltareProcessor:
             uploaded_files = []
             year_folder_id = None
 
-            service = self._get_drive_service()
-
             if service:
                 # Vi kör alltid detta för att få year_folder_id till JSON, även utan bilagor
                 uploaded_files, year_folder_id = self._upload_to_drive(service, ai_data, attachment_paths)
+            else:
+                LOGGER.warning("Ingen Drive-tjänst tillgänglig.")
 
             # 3. Uppdatera Översikts-JSON
             if service and year_folder_id:
@@ -175,24 +172,6 @@ class ForvaltareProcessor:
                 except Exception:
                     pass
             return {}
-
-    def _get_drive_service(self):
-        if not all([self.google_client_id, self.google_client_secret, self.google_refresh_token]):
-            LOGGER.error("Saknar inloggningsuppgifter för Google Drive.")
-            return None
-
-        try:
-            creds = Credentials(
-                None,
-                refresh_token=self.google_refresh_token,
-                token_uri="https://oauth2.googleapis.com/token",
-                client_id=self.google_client_id,
-                client_secret=self.google_client_secret
-            )
-            return build('drive', 'v3', credentials=creds)
-        except Exception as e:
-            LOGGER.error(f"Kunde inte skapa Google Drive-tjänst: {e}")
-            return None
 
     def _upload_to_drive(self, service, ai_data, attachment_paths):
         """Laddar upp filer och returnerar (lista_på_filer, year_folder_id)."""

@@ -1,4 +1,4 @@
-# Version: 0.19.0 - 2026-05-10
+# Version: 0.21.0
 """Konstanter för Mail Agent."""
 import logging
 
@@ -7,17 +7,12 @@ DOMAIN = "mail_agent"
 # Signals
 SIGNAL_MAIL_AGENT_UPDATE = "mail_agent_update"
 
-# Connection
-CONF_IMAP_SERVER = "imap_server"
-CONF_IMAP_PORT = "imap_port"
-CONF_USERNAME = "username"
-CONF_PASSWORD = "password"
-CONF_FOLDER = "folder"
-
-# SMTP
-CONF_SMTP_SERVER = "smtp_server"
-CONF_SMTP_PORT = "smtp_port"
-CONF_SMTP_SENDER_NAME = "smtp_sender_name"
+# Scopes
+OAUTH2_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/drive.file",
+]
 
 # Options / Logic Type
 CONF_INTERPRETATION_TYPE = "interpretation_type"
@@ -25,9 +20,6 @@ TYPE_KALLELSE = "kallelse"
 TYPE_FORVALTARE = "forvaltare"
 
 # Options / Storage
-CONF_GOOGLE_CLIENT_ID = "google_client_id"
-CONF_GOOGLE_CLIENT_SECRET = "google_client_secret"
-CONF_GOOGLE_REFRESH_TOKEN = "google_refresh_token"
 CONF_DRIVE_FOLDER_PATH = "drive_folder_path"
 CONF_SUMMARY_FILENAME = "summary_filename"
 
@@ -46,17 +38,15 @@ CONF_EMAIL_RECIPIENT_1 = "email_recipient_1"
 CONF_EMAIL_RECIPIENT_2 = "email_recipient_2"
 CONF_NOTIFY_SERVICE_1 = "notify_service_1"
 CONF_NOTIFY_SERVICE_2 = "notify_service_2"
+CONF_SENDER_NAME = "sender_name"
 
 # Defaults
-DEFAULT_IMAP_PORT = 993
-DEFAULT_SMTP_PORT = 587
-DEFAULT_FOLDER = "INBOX"
 DEFAULT_SCAN_INTERVAL = 60
 DEFAULT_ENABLE_DEBUG = False
-DEFAULT_GEMINI_MODEL = "gemini-3-pro-preview"
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 DEFAULT_INTERPRETATION_TYPE = TYPE_KALLELSE
-DEFAULT_SMTP_SENDER_NAME = "Mail Agent"
 DEFAULT_DRIVE_FOLDER_PATH = "Fakturor"
 DEFAULT_SUMMARY_FILENAME = "fakturor_oversikt.json"
+DEFAULT_SENDER_NAME = "Mail Agent"
 
 LOGGER = logging.getLogger(__package__)

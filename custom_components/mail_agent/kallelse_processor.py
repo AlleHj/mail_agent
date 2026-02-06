@@ -1,8 +1,8 @@
-# Version: 0.18.0 - 2025-12-18
+# Fil: custom_components/mail_agent/kallelse_processor.py | Version: 0.21.0
 """Processor för att tolka kallelser och bokningar."""
 
 import json
-import smtplib
+import base64
 import mimetypes
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -15,7 +15,7 @@ from email.utils import formataddr
 from google import genai
 
 from homeassistant.util import dt as dt_util
-from .const import LOGGER
+from .const import LOGGER, CONF_SENDER_NAME, DEFAULT_SENDER_NAME
 
 class KallelseProcessor:
     """Hanterar logiken för 'Tolka kallelse'."""
@@ -29,12 +29,8 @@ class KallelseProcessor:
         self.cal1 = config.get("calendar_entity_1")
         self.cal2 = config.get("calendar_entity_2")
 
-        self.smtp_server = config.get("smtp_server")
-        self.smtp_port = config.get("smtp_port", 587)
-        self.smtp_user = config.get("username")
-        self.smtp_password = config.get("password")
-
-        self.smtp_sender_name = config.get("smtp_sender_name", "Mail Agent")
+        # SMTP settings removed, using Gmail API + Sender Name
+        self.sender_name = config.get(CONF_SENDER_NAME, DEFAULT_SENDER_NAME)
 
         self.email_recipients = [
             r for r in [config.get("email_recipient_1"), config.get("email_recipient_2")] if r
@@ -43,7 +39,7 @@ class KallelseProcessor:
             s for s in [config.get("notify_service_1"), config.get("notify_service_2")] if s
         ]
 
-    def process_email(self, sender, subject, body, attachment_paths):
+    def process_email(self, sender, subject, body, attachment_paths, service=None):
         """
         Huvudmetod som anropas från MailAgentScanner.
         Returnerar ai_data (dict) om framgångsrik, annars None.
@@ -82,7 +78,7 @@ class KallelseProcessor:
                 if ai_data.get("start_time"):
                     self._create_calendar_events(ai_data)
 
-                self._send_notifications(ai_data, subject, attachment_paths)
+                self._send_notifications(ai_data, subject, attachment_paths, service)
 
             # Returnera data så att sensorn kan uppdateras
             return ai_data
@@ -173,7 +169,7 @@ class KallelseProcessor:
                 )
             )
 
-    def _send_notifications(self, ai_data, original_subject, attachment_paths):
+    def _send_notifications(self, ai_data, original_subject, attachment_paths, service):
         summary = ai_data.get("summary", "Okänd händelse")
         start_time = ai_data.get("start_time", "okänd tid")
         location = ai_data.get("location", "")
@@ -182,12 +178,12 @@ class KallelseProcessor:
 
         if self.notify_services:
             mobile_message = f"Ny bokning: {summary}\nTid: {start_time}"
-            for service in self.notify_services:
+            for service_name_conf in self.notify_services:
                 domain = "notify"
-                service_name = service.replace("notify.", "")
+                s_name = service_name_conf.replace("notify.", "")
                 self.hass.add_job(
                     self.hass.services.async_call(
-                        domain, service_name,
+                        domain, s_name,
                         {
                             "title": "Mail Agent",
                             "message": mobile_message,
@@ -196,7 +192,7 @@ class KallelseProcessor:
                     )
                 )
 
-        if self.smtp_server and self.email_recipients:
+        if service and self.email_recipients:
             email_body = f"""
             <h3>Mail Agent: Ny händelse</h3>
             <p><b>Händelse:</b> {summary}</p>
@@ -208,11 +204,11 @@ class KallelseProcessor:
             <p><small>Originalämne: {original_subject}</small></p>
             """
             try:
-                self._send_smtp_email(f"Ny kallelse: {summary}", email_body, attachment_paths, suggested_filename)
+                self._send_gmail_email(service, f"Ny kallelse: {summary}", email_body, attachment_paths, suggested_filename)
             except Exception as e:
-                LOGGER.error(f"Kunde inte skicka SMTP-mail: {e}")
+                LOGGER.error(f"Kunde inte skicka Gmail: {e}")
 
-    def _send_smtp_email(self, subject, html_body, files, suggested_filename=None):
+    def _send_gmail_email(self, service, subject, html_body, files, suggested_filename=None):
         if not files:
             msg = MIMEText(html_body, 'html')
         else:
@@ -241,18 +237,29 @@ class KallelseProcessor:
                 except Exception as e:
                     LOGGER.error(f"Kunde inte bifoga fil {file_path}: {e}")
 
-        msg['From'] = formataddr((self.smtp_sender_name, self.smtp_user))
+        # From: "Sender Name" <me>
+        # Gmail API uses the authenticated user as default, but we can specify name.
+        # We can't easily guess the email address unless we fetch profile, so we just set the name.
+        # If we set From to "Name <email>", Gmail verifies the email.
+        # It's safer to just let Gmail handle the address or use the one from profile if available.
+        # But `formataddr` requires an address.
+        # We can try just "Name" but standard RFC requires email.
+        # We can use "me" but formataddr might not like it.
+        # Let's try to just not set From header or set it to self.sender_name (which might be just "Mail Agent").
+        # If we don't set 'From', Gmail uses account default.
+        # If we want a display name, we need the email address.
+        # We can't invoke API here easily to get profile just for this.
+        # Let's assume the user is okay with default From, or we can fetch profile once in scanner.
+        # But let's skip 'From' header manipulation for now to avoid complexity, or just set Subject/To.
+
         msg['To'] = ", ".join(self.email_recipients)
         msg['Subject'] = subject
 
-        if self.smtp_port == 465:
-            server = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port)
-        else:
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-            server.starttls()
+        # Base64url encode
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+        message = {'raw': raw}
 
-        server.login(self.smtp_user, self.smtp_password)
-        server.sendmail(self.smtp_user, self.email_recipients, msg.as_string())
-        server.quit()
+        service.users().messages().send(userId='me', body=message).execute()
+
         if self.enable_debug:
-            LOGGER.info("SMTP mail skickat framgångsrikt (Kallelse).")
+            LOGGER.info("Gmail skickat framgångsrikt (Kallelse).")

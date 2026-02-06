@@ -1,16 +1,15 @@
-# Fil: custom_components/mail_agent/config_flow.py | Version: 0.18.0 | Datum: 2025-12-18
+# Fil: custom_components/mail_agent/config_flow.py | Version: 0.21.0
 """Config flow för Mail Agent integration."""
 
-import imaplib
 import voluptuous as vol
 from homeassistant.config_entries import (
-    ConfigFlow,
     ConfigFlowResult,
     OptionsFlow,
     ConfigEntry,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.config_entry_oauth2_flow import AbstractOAuth2FlowHandler
 from homeassistant.helpers.selector import (
     EntitySelector,
     EntitySelectorConfig,
@@ -22,14 +21,6 @@ from homeassistant.helpers.selector import (
 from .const import (
     DOMAIN,
     LOGGER,
-    CONF_IMAP_SERVER,
-    CONF_IMAP_PORT,
-    CONF_USERNAME,
-    CONF_PASSWORD,
-    CONF_FOLDER,
-    CONF_SMTP_SERVER,
-    CONF_SMTP_PORT,
-    CONF_SMTP_SENDER_NAME,
     CONF_SCAN_INTERVAL,
     CONF_ENABLE_DEBUG,
     CONF_GEMINI_API_KEY,
@@ -41,222 +32,81 @@ from .const import (
     CONF_NOTIFY_SERVICE_1,
     CONF_NOTIFY_SERVICE_2,
     CONF_INTERPRETATION_TYPE,
-    CONF_GOOGLE_CLIENT_ID,
-    CONF_GOOGLE_CLIENT_SECRET,
-    CONF_GOOGLE_REFRESH_TOKEN,
     CONF_DRIVE_FOLDER_PATH,
     CONF_SUMMARY_FILENAME,
+    CONF_SENDER_NAME,
     TYPE_KALLELSE,
     TYPE_FORVALTARE,
-    DEFAULT_IMAP_PORT,
-    DEFAULT_SMTP_PORT,
-    DEFAULT_FOLDER,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_ENABLE_DEBUG,
     DEFAULT_GEMINI_MODEL,
     DEFAULT_INTERPRETATION_TYPE,
-    DEFAULT_SMTP_SENDER_NAME,
     DEFAULT_DRIVE_FOLDER_PATH,
     DEFAULT_SUMMARY_FILENAME,
+    DEFAULT_SENDER_NAME,
+    OAUTH2_SCOPES,
 )
 
-async def validate_input(hass: HomeAssistant, data: dict) -> dict:
-    """Validera IMAP-anslutning."""
-    def _test_imap_login():
-        try:
-            connection = imaplib.IMAP4_SSL(data[CONF_IMAP_SERVER], data[CONF_IMAP_PORT])
-            connection.login(data[CONF_USERNAME], data[CONF_PASSWORD])
-            # Verifiera att mappen faktiskt finns
-            typ, _ = connection.select(data[CONF_FOLDER])
-            if typ != 'OK':
-                raise ValueError(f"Mappen {data[CONF_FOLDER]} finns inte.")
-            connection.logout()
-            return True
-        except imaplib.IMAP4.error:
-            raise ValueError("invalid_auth")
-        except Exception as e:
-            LOGGER.error("Anslutningsfel: %s", e)
-            raise ConnectionError("cannot_connect")
-
-    await hass.async_add_executor_job(_test_imap_login)
-    # Returnera en titel som hjälper dig skilja dem åt i listan, men inget unikt ID krävs.
-    return {"title": f"{data[CONF_USERNAME]} ({data[CONF_FOLDER]})"}
-
-
-class MailAgentConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Hantera en config flow för Mail Agent."""
+class MailAgentConfigFlow(AbstractOAuth2FlowHandler, domain=DOMAIN):
+    """Hantera en config flow för Mail Agent med OAuth2."""
 
     VERSION = 1
+    DOMAIN = DOMAIN
+
+    @property
+    def logger(self):
+        """Return logger."""
+        return LOGGER
+
+    @property
+    def extra_authorize_data(self) -> dict:
+        """Extra data that needs to be appended to the authorize url."""
+        return {
+            "scope": " ".join(OAUTH2_SCOPES),
+            "access_type": "offline",
+            "prompt": "consent",
+        }
+
+    async def async_step_reauth(self, entry_data: dict) -> ConfigFlowResult:
+        """Perform reauth upon an API authentication error."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input: dict | None = None) -> ConfigFlowResult:
+        """Dialog that informs the user that reauth is required."""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="reauth_confirm",
+                description_placeholders={"account": self._get_reauth_entry().data.get("auth_implementation")},
+            )
+        return await self.async_step_user()
+
+    async def async_oauth_create_entry(self, data: dict) -> ConfigFlowResult:
+        """Create an entry for the flow."""
+        # Unikt ID baserat på auth implementation title eller user ID om möjligt,
+        # men för nu använder vi bara implementationen eller inget (låter HA hantera det).
+        # Vi sätter title till implementationens namn eller "Mail Agent".
+        title = self.flow_impl.name
+        if "token" in data and "expires_at" in data["token"]:
+             # Vi kan försöka hämta email här om vi vill ha en snygg titel,
+             # men det kräver ett extra anrop. Vi nöjer oss med default.
+             pass
+
+        return self.async_create_entry(title=title, data=data)
 
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
-        return MailAgentOptionsFlowHandler()
-
-    async def async_step_user(self, user_input=None) -> ConfigFlowResult:
-        errors = {}
-
-        # Hämta tillgängliga notifieringstjänster
-        notify_services = []
-        services = self.hass.services.async_services()
-        if "notify" in services:
-            for service in services["notify"]:
-                notify_services.append(f"notify.{service}")
-        notify_services.sort()
-
-        if user_input is not None:
-            try:
-                # 1. Validera anslutning
-                info = await validate_input(self.hass, user_input)
-
-                # NOTERING: Vi sätter INGET unikt ID här.
-                # Detta tillåter obegränsat antal instanser med exakt samma inställningar.
-
-                data_config = {
-                    CONF_IMAP_SERVER: user_input[CONF_IMAP_SERVER],
-                    CONF_IMAP_PORT: user_input[CONF_IMAP_PORT],
-                    CONF_USERNAME: user_input[CONF_USERNAME],
-                    CONF_PASSWORD: user_input[CONF_PASSWORD],
-                    CONF_FOLDER: user_input[CONF_FOLDER],
-                }
-
-                options_config = {
-                    CONF_SMTP_SERVER: user_input.get(CONF_SMTP_SERVER),
-                    CONF_SMTP_PORT: user_input.get(CONF_SMTP_PORT),
-                    CONF_SMTP_SENDER_NAME: user_input.get(CONF_SMTP_SENDER_NAME),
-                    CONF_INTERPRETATION_TYPE: user_input.get(CONF_INTERPRETATION_TYPE),
-                    CONF_GOOGLE_CLIENT_ID: user_input.get(CONF_GOOGLE_CLIENT_ID),
-                    CONF_GOOGLE_CLIENT_SECRET: user_input.get(CONF_GOOGLE_CLIENT_SECRET),
-                    CONF_GOOGLE_REFRESH_TOKEN: user_input.get(CONF_GOOGLE_REFRESH_TOKEN),
-                    CONF_DRIVE_FOLDER_PATH: user_input.get(CONF_DRIVE_FOLDER_PATH),
-                    CONF_SUMMARY_FILENAME: user_input.get(CONF_SUMMARY_FILENAME),
-                    CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL),
-                    CONF_ENABLE_DEBUG: user_input.get(CONF_ENABLE_DEBUG),
-                    CONF_GEMINI_API_KEY: user_input.get(CONF_GEMINI_API_KEY),
-                    CONF_GEMINI_MODEL: user_input.get(CONF_GEMINI_MODEL),
-                    CONF_CALENDAR_1: user_input.get(CONF_CALENDAR_1),
-                    CONF_CALENDAR_2: user_input.get(CONF_CALENDAR_2),
-                    CONF_EMAIL_RECIPIENT_1: user_input.get(CONF_EMAIL_RECIPIENT_1),
-                    CONF_EMAIL_RECIPIENT_2: user_input.get(CONF_EMAIL_RECIPIENT_2),
-                    CONF_NOTIFY_SERVICE_1: user_input.get(CONF_NOTIFY_SERVICE_1),
-                    CONF_NOTIFY_SERVICE_2: user_input.get(CONF_NOTIFY_SERVICE_2),
-                }
-
-                return self.async_create_entry(
-                    title=info["title"],
-                    data=data_config,
-                    options=options_config
-                )
-
-            except ValueError:
-                errors["base"] = "invalid_auth"
-            except ConnectionError:
-                errors["base"] = "cannot_connect"
-            except Exception:
-                LOGGER.exception("Oväntat fel")
-                errors["base"] = "unknown"
-
-        # Definition av Selectors för UI
-        notify_selector = SelectSelector(
-            SelectSelectorConfig(
-                options=notify_services,
-                mode=SelectSelectorMode.DROPDOWN,
-                custom_value=True
-            )
-        )
-
-        calendar_selector = EntitySelector(
-            EntitySelectorConfig(domain="calendar", multiple=False)
-        )
-
-        type_selector = SelectSelector(
-            SelectSelectorConfig(
-                options=[
-                    {"label": "Tolka kallelse", "value": TYPE_KALLELSE},
-                    {"label": "Förvaltare (Faktura/Admin)", "value": TYPE_FORVALTARE},
-                ],
-                mode=SelectSelectorMode.DROPDOWN,
-                translation_key="interpretation_type"
-            )
-        )
-
-        # Formulärschema
-        schema = vol.Schema({
-            # IMAP
-            vol.Required(CONF_IMAP_SERVER): str,
-            vol.Required(CONF_USERNAME): str,
-            vol.Required(CONF_PASSWORD): str,
-            vol.Optional(CONF_IMAP_PORT, default=DEFAULT_IMAP_PORT): int,
-            vol.Optional(CONF_FOLDER, default=DEFAULT_FOLDER): str,
-
-            # SMTP
-            vol.Optional(CONF_SMTP_SERVER): str,
-            vol.Optional(CONF_SMTP_PORT, default=DEFAULT_SMTP_PORT): int,
-            vol.Optional(CONF_SMTP_SENDER_NAME, default=DEFAULT_SMTP_SENDER_NAME): str,
-
-            # Logic Type
-            vol.Optional(CONF_INTERPRETATION_TYPE, default=DEFAULT_INTERPRETATION_TYPE): type_selector,
-            vol.Optional(CONF_GOOGLE_CLIENT_ID): str,
-            vol.Optional(CONF_GOOGLE_CLIENT_SECRET): str,
-            vol.Optional(CONF_GOOGLE_REFRESH_TOKEN): str,
-            vol.Optional(CONF_DRIVE_FOLDER_PATH, default=DEFAULT_DRIVE_FOLDER_PATH): str,
-            vol.Optional(CONF_SUMMARY_FILENAME, default=DEFAULT_SUMMARY_FILENAME): str,
-
-            # AI
-            vol.Required(CONF_GEMINI_API_KEY): str,
-            vol.Optional(CONF_GEMINI_MODEL, default=DEFAULT_GEMINI_MODEL): str,
-            vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): cv.positive_int,
-            vol.Optional(CONF_ENABLE_DEBUG, default=DEFAULT_ENABLE_DEBUG): bool,
-
-            # Integrations
-            vol.Optional(CONF_CALENDAR_1): calendar_selector,
-            vol.Optional(CONF_CALENDAR_2): calendar_selector,
-            vol.Optional(CONF_NOTIFY_SERVICE_1): notify_selector,
-            vol.Optional(CONF_NOTIFY_SERVICE_2): notify_selector,
-            vol.Optional(CONF_EMAIL_RECIPIENT_1): str,
-            vol.Optional(CONF_EMAIL_RECIPIENT_2): str,
-        })
-
-        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+        return MailAgentOptionsFlowHandler(config_entry)
 
 
 class MailAgentOptionsFlowHandler(OptionsFlow):
+    def __init__(self, config_entry: ConfigEntry):
+        self.config_entry = config_entry
+
     async def async_step_init(self, user_input=None) -> ConfigFlowResult:
         if user_input is not None:
-            # Uppdatera config entry med nya data
-            connection_data = {
-                CONF_IMAP_SERVER: user_input[CONF_IMAP_SERVER],
-                CONF_IMAP_PORT: user_input[CONF_IMAP_PORT],
-                CONF_USERNAME: user_input[CONF_USERNAME],
-                CONF_PASSWORD: user_input[CONF_PASSWORD],
-                CONF_FOLDER: user_input[CONF_FOLDER],
-            }
-            options_data = {
-                CONF_SMTP_SERVER: user_input.get(CONF_SMTP_SERVER),
-                CONF_SMTP_PORT: user_input.get(CONF_SMTP_PORT),
-                CONF_SMTP_SENDER_NAME: user_input.get(CONF_SMTP_SENDER_NAME),
-                CONF_INTERPRETATION_TYPE: user_input.get(CONF_INTERPRETATION_TYPE),
-                CONF_GOOGLE_CLIENT_ID: user_input.get(CONF_GOOGLE_CLIENT_ID),
-                CONF_GOOGLE_CLIENT_SECRET: user_input.get(CONF_GOOGLE_CLIENT_SECRET),
-                CONF_GOOGLE_REFRESH_TOKEN: user_input.get(CONF_GOOGLE_REFRESH_TOKEN),
-                CONF_DRIVE_FOLDER_PATH: user_input.get(CONF_DRIVE_FOLDER_PATH),
-                CONF_SUMMARY_FILENAME: user_input.get(CONF_SUMMARY_FILENAME),
-                CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL),
-                CONF_ENABLE_DEBUG: user_input.get(CONF_ENABLE_DEBUG),
-                CONF_GEMINI_API_KEY: user_input.get(CONF_GEMINI_API_KEY),
-                CONF_GEMINI_MODEL: user_input.get(CONF_GEMINI_MODEL),
-                CONF_CALENDAR_1: user_input.get(CONF_CALENDAR_1),
-                CONF_CALENDAR_2: user_input.get(CONF_CALENDAR_2),
-                CONF_EMAIL_RECIPIENT_1: user_input.get(CONF_EMAIL_RECIPIENT_1),
-                CONF_EMAIL_RECIPIENT_2: user_input.get(CONF_EMAIL_RECIPIENT_2),
-                CONF_NOTIFY_SERVICE_1: user_input.get(CONF_NOTIFY_SERVICE_1),
-                CONF_NOTIFY_SERVICE_2: user_input.get(CONF_NOTIFY_SERVICE_2),
-            }
+            return self.async_create_entry(title="", data=user_input)
 
-            self.hass.config_entries.async_update_entry(self.config_entry, data=connection_data)
-            return self.async_create_entry(title="", data=options_data)
-
-        config = self.config_entry.data
         options = self.config_entry.options
 
         # Bygg upp listor för options-flödet
@@ -291,33 +141,33 @@ class MailAgentOptionsFlowHandler(OptionsFlow):
         )
 
         options_schema = vol.Schema({
-            vol.Required(CONF_IMAP_SERVER, default=config.get(CONF_IMAP_SERVER)): str,
-            vol.Required(CONF_USERNAME, default=config.get(CONF_USERNAME)): str,
-            vol.Required(CONF_PASSWORD, default=config.get(CONF_PASSWORD)): str,
-            vol.Optional(CONF_IMAP_PORT, default=config.get(CONF_IMAP_PORT, DEFAULT_IMAP_PORT)): int,
-            vol.Optional(CONF_FOLDER, default=config.get(CONF_FOLDER, DEFAULT_FOLDER)): str,
-
-            vol.Optional(CONF_SMTP_SERVER, description={"suggested_value": options.get(CONF_SMTP_SERVER, "")}): str,
-            vol.Optional(CONF_SMTP_PORT, default=options.get(CONF_SMTP_PORT, DEFAULT_SMTP_PORT)): int,
-            vol.Optional(CONF_SMTP_SENDER_NAME, default=options.get(CONF_SMTP_SENDER_NAME, DEFAULT_SMTP_SENDER_NAME)): str,
-
+            # Logic Type
             vol.Optional(CONF_INTERPRETATION_TYPE, default=options.get(CONF_INTERPRETATION_TYPE, DEFAULT_INTERPRETATION_TYPE)): type_selector,
-            vol.Optional(CONF_GOOGLE_CLIENT_ID, description={"suggested_value": options.get(CONF_GOOGLE_CLIENT_ID, "")}): str,
-            vol.Optional(CONF_GOOGLE_CLIENT_SECRET, description={"suggested_value": options.get(CONF_GOOGLE_CLIENT_SECRET, "")}): str,
-            vol.Optional(CONF_GOOGLE_REFRESH_TOKEN, description={"suggested_value": options.get(CONF_GOOGLE_REFRESH_TOKEN, "")}): str,
+
+            # Sender Name (used for emails)
+            vol.Optional(CONF_SENDER_NAME, default=options.get(CONF_SENDER_NAME, DEFAULT_SENDER_NAME)): str,
+
+            # Drive / Storage
             vol.Optional(CONF_DRIVE_FOLDER_PATH, default=options.get(CONF_DRIVE_FOLDER_PATH, DEFAULT_DRIVE_FOLDER_PATH)): str,
             vol.Optional(CONF_SUMMARY_FILENAME, default=options.get(CONF_SUMMARY_FILENAME, DEFAULT_SUMMARY_FILENAME)): str,
+
+            # Operation
             vol.Optional(CONF_SCAN_INTERVAL, default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): cv.positive_int,
             vol.Optional(CONF_ENABLE_DEBUG, default=options.get(CONF_ENABLE_DEBUG, DEFAULT_ENABLE_DEBUG)): bool,
+
+            # AI
             vol.Optional(CONF_GEMINI_API_KEY, default=options.get(CONF_GEMINI_API_KEY, "")): str,
             vol.Optional(CONF_GEMINI_MODEL, default=options.get(CONF_GEMINI_MODEL, DEFAULT_GEMINI_MODEL)): str,
 
+            # Calendar
             vol.Optional(CONF_CALENDAR_1, description={"suggested_value": options.get(CONF_CALENDAR_1)}): calendar_selector,
             vol.Optional(CONF_CALENDAR_2, description={"suggested_value": options.get(CONF_CALENDAR_2)}): calendar_selector,
 
+            # Email Recipients
             vol.Optional(CONF_EMAIL_RECIPIENT_1, description={"suggested_value": options.get(CONF_EMAIL_RECIPIENT_1)}): str,
             vol.Optional(CONF_EMAIL_RECIPIENT_2, description={"suggested_value": options.get(CONF_EMAIL_RECIPIENT_2)}): str,
 
+            # Notifications
             vol.Optional(CONF_NOTIFY_SERVICE_1, description={"suggested_value": options.get(CONF_NOTIFY_SERVICE_1)}): notify_selector,
             vol.Optional(CONF_NOTIFY_SERVICE_2, description={"suggested_value": options.get(CONF_NOTIFY_SERVICE_2)}): notify_selector,
         })
