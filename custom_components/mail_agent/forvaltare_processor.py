@@ -27,9 +27,12 @@ class ForvaltareProcessor:
         self.enable_debug = config.get("enable_debug")
 
         # Google Drive Konfiguration
-        # Auth sköts nu centralt i __init__.py
         self.drive_folder_path = config.get("drive_folder_path", "Fakturor")
         self.summary_filename = config.get("summary_filename", "fakturor_oversikt.json")
+
+        # Cache for folder IDs to reduce API calls and prevent duplicates
+        # Key: (parent_id, folder_name), Value: folder_id
+        self.folder_cache = {}
 
     def process_email(self, sender, subject, body, attachment_paths, service=None):
         """
@@ -480,7 +483,15 @@ class ForvaltareProcessor:
         return parent_id
 
     def _get_or_create_folder(self, service, folder_name, parent_id=None):
+        # 1. Check local cache
+        cache_key = (parent_id, folder_name)
+        if cache_key in self.folder_cache:
+            if self.enable_debug:
+                LOGGER.debug(f"Using cached folder ID for '{folder_name}' (parent: {parent_id}): {self.folder_cache[cache_key]}")
+            return self.folder_cache[cache_key]
+
         try:
+            # 2. Check Drive
             query = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and trashed=false"
             if parent_id:
                 query += f" and '{parent_id}' in parents"
@@ -489,8 +500,17 @@ class ForvaltareProcessor:
             files = results.get('files', [])
 
             if files:
-                return files[0]['id']
+                folder_id = files[0]['id']
+                self.folder_cache[cache_key] = folder_id
+                return folder_id
             else:
+                # 3. Create Folder (with brief pause)
+                if self.enable_debug:
+                    LOGGER.debug(f"Creating folder '{folder_name}'...")
+
+                # Small pause to help consistency/propagation
+                time.sleep(2)
+
                 file_metadata = {
                     'name': folder_name,
                     'mimeType': 'application/vnd.google-apps.folder'
@@ -498,7 +518,14 @@ class ForvaltareProcessor:
                 if parent_id:
                     file_metadata['parents'] = [parent_id]
                 folder = service.files().create(body=file_metadata, fields='id').execute()
-                return folder.get('id')
+                folder_id = folder.get('id')
+
+                if folder_id:
+                    self.folder_cache[cache_key] = folder_id
+                    if self.enable_debug:
+                        LOGGER.info(f"Created folder '{folder_name}' with ID: {folder_id}")
+
+                return folder_id
         except Exception as e:
             LOGGER.error(f"Fel vid mapphantering ({folder_name}): {e}")
             return None
@@ -528,8 +555,9 @@ class ForvaltareProcessor:
 
     def _get_swedish_month(self, month_number):
         months = [
-            "Januari", "Februari", "Mars", "April", "Maj", "Juni",
-            "Juli", "Augusti", "September", "Oktober", "November", "December"
+            "01. Januari", "02. Februari", "03. Mars", "04. April",
+            "05. Maj", "06. Juni", "07. Juli", "08. Augusti",
+            "09. September", "10. Oktober", "11. November", "12. December"
         ]
         return months[month_number - 1]
 
