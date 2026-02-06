@@ -1,15 +1,14 @@
-# Version: 0.23.0
+# Fil: custom_components/mail_agent/forvaltare_processor.py | Version: 0.24.0
 """Processor för att hantera fakturor och förvaltning via Google Drive."""
 
 import json
 import io
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 
 from google import genai
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload, MediaIoBaseUpload
 
 from homeassistant.util import dt as dt_util
@@ -28,15 +27,17 @@ class ForvaltareProcessor:
         self.enable_debug = config.get("enable_debug")
 
         # Google Drive Konfiguration
-        self.google_client_id = config.get("google_client_id")
-        self.google_client_secret = config.get("google_client_secret")
-        self.google_refresh_token = config.get("google_refresh_token")
         self.drive_folder_path = config.get("drive_folder_path", "Fakturor")
         self.summary_filename = config.get("summary_filename", "fakturor_oversikt.json")
 
-    def process_email(self, sender, subject, body, attachment_paths):
+        # Cache for folder IDs to reduce API calls and prevent duplicates
+        # Key: (parent_id, folder_name), Value: folder_id
+        self.folder_cache = {}
+
+    def process_email(self, sender, subject, body, attachment_paths, service=None):
         """
         Huvudmetod som anropas från MailAgentScanner.
+        service: Ett autentiserat Google Drive Resource objekt.
         """
 
         if not self.gemini_api_key:
@@ -47,6 +48,9 @@ class ForvaltareProcessor:
         try:
             # 1. Anropa AI
             ai_data = self._call_gemini(attachment_paths, subject, body)
+
+            if not ai_data:
+                return None
 
             if isinstance(ai_data, list):
                 if len(ai_data) > 0:
@@ -66,24 +70,24 @@ class ForvaltareProcessor:
             })
 
             # 2. Ladda upp filer till Drive (eller förbered mappar för JSON)
-            uploaded_files = []
+            uploaded_files_info = [] # Lista med dicts {name, link}
             year_folder_id = None
-
-            service = self._get_drive_service()
 
             if service:
                 # Vi kör alltid detta för att få year_folder_id till JSON, även utan bilagor
-                uploaded_files, year_folder_id = self._upload_to_drive(service, ai_data, attachment_paths)
+                uploaded_files_info, year_folder_id = self._upload_to_drive(service, ai_data, attachment_paths)
+            else:
+                LOGGER.warning("Ingen Drive-tjänst tillgänglig.")
 
             # 3. Uppdatera Översikts-JSON
             if service and year_folder_id:
                 try:
-                    self._process_summary_json(service, year_folder_id, ai_data)
+                    self._process_summary_json(service, year_folder_id, ai_data, uploaded_files_info)
                 except Exception as e:
                     LOGGER.error(f"Kunde inte uppdatera översiktsfilen: {e}")
 
             # 4. Notifiera
-            self._create_notification(ai_data, sender, uploaded_files)
+            self._create_notification(ai_data, sender, uploaded_files_info)
 
             return ai_data
 
@@ -152,50 +156,45 @@ class ForvaltareProcessor:
 
         contents = uploaded_files + [prompt]
 
-        try:
-            response = client.models.generate_content(
-                model=self.gemini_model,
-                contents=contents,
-                config={'response_mime_type': 'application/json'}
-            )
+        # Retry logic for 503 UNAVAILABLE
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model=self.gemini_model,
+                    contents=contents,
+                    config={'response_mime_type': 'application/json'}
+                )
 
-            for f in uploaded_files:
-                try:
-                    client.files.delete(name=f.name)
-                except Exception:
-                    pass
+                for f in uploaded_files:
+                    try:
+                        client.files.delete(name=f.name)
+                    except Exception:
+                        pass
 
-            return json.loads(response.text)
+                return json.loads(response.text)
 
-        except Exception as e:
-            LOGGER.error(f"Fel vid AI-anrop: {e}")
-            for f in uploaded_files:
-                try:
-                    client.files.delete(name=f.name)
-                except Exception:
-                    pass
-            return {}
+            except Exception as e:
+                # Check for 503 or overload errors
+                if "503" in str(e) or "overloaded" in str(e).lower():
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 2
+                        LOGGER.warning(f"Gemini 503 Unavailable. Försök {attempt + 1}/{max_retries}. Väntar {wait_time}s...")
+                        time.sleep(wait_time)
+                        continue
 
-    def _get_drive_service(self):
-        if not all([self.google_client_id, self.google_client_secret, self.google_refresh_token]):
-            LOGGER.error("Saknar inloggningsuppgifter för Google Drive.")
-            return None
+                LOGGER.error(f"Fel vid AI-anrop (försök {attempt+1}): {e}")
+                for f in uploaded_files:
+                    try:
+                        client.files.delete(name=f.name)
+                    except Exception:
+                        pass
+                return None
 
-        try:
-            creds = Credentials(
-                None,
-                refresh_token=self.google_refresh_token,
-                token_uri="https://oauth2.googleapis.com/token",
-                client_id=self.google_client_id,
-                client_secret=self.google_client_secret
-            )
-            return build('drive', 'v3', credentials=creds)
-        except Exception as e:
-            LOGGER.error(f"Kunde inte skapa Google Drive-tjänst: {e}")
-            return None
+        return None
 
     def _upload_to_drive(self, service, ai_data, attachment_paths):
-        """Laddar upp filer och returnerar (lista_på_filer, year_folder_id)."""
+        """Laddar upp filer och returnerar (lista_med_info, year_folder_id)."""
         # Datumlogik: Fakturadatum -> Förfallodatum -> Idag
         date_str = ai_data.get("invoice_date") or ai_data.get("due_date")
         if not date_str or date_str.lower() == "okänt":
@@ -222,7 +221,7 @@ class ForvaltareProcessor:
         if not month_id:
             return [], year_id
 
-        uploaded_files = []
+        uploaded_info = []
 
         # Hämta data för filnamn
         sender = self._sanitize_filename(ai_data.get("sender_name", "okänt"))
@@ -257,25 +256,35 @@ class ForvaltareProcessor:
 
                 # KONTROLLERA DUBBLETT
                 query = f"name = '{new_filename}' and '{month_id}' in parents and trashed = false"
-                existing = service.files().list(q=query, fields="files(id)").execute()
+                existing = service.files().list(q=query, fields="files(id, webViewLink)").execute()
                 if existing.get('files'):
                     LOGGER.info(f"Filen '{new_filename}' finns redan på Drive. Hoppar över uppladdning.")
+                    # Lägg till existerande fil till info om vi vill länka den
+                    f_obj = existing.get('files')[0]
+                    uploaded_info.append({
+                        "name": new_filename,
+                        "link": f_obj.get("webViewLink", "")
+                    })
                     continue
 
                 file_metadata = {'name': new_filename, 'parents': [month_id]}
                 media = MediaFileUpload(src_path, mimetype='application/pdf')
 
-                file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+                file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
                 if self.enable_debug:
                     LOGGER.info(f"Laddade upp fil till Drive: {new_filename} (ID: {file.get('id')})")
-                uploaded_files.append(new_filename)
+
+                uploaded_info.append({
+                    "name": new_filename,
+                    "link": file.get("webViewLink", "")
+                })
 
             except Exception as e:
                 LOGGER.error(f"Kunde inte ladda upp {src_path}: {e}")
 
-        return uploaded_files, year_id
+        return uploaded_info, year_id
 
-    def _process_summary_json(self, service, year_folder_id, ai_data):
+    def _process_summary_json(self, service, year_folder_id, ai_data, uploaded_files_info):
         """Hämtar, uppdaterar och sparar JSON-översikten i årsmappen med svenska nycklar och statistik."""
         if not self.summary_filename:
             return
@@ -364,6 +373,11 @@ class ForvaltareProcessor:
                  exists = True
                  break
 
+        # Hämta länk från första filen om den finns
+        file_link = ""
+        if uploaded_files_info:
+            file_link = uploaded_files_info[0].get("link", "")
+
         if not exists:
             entry = {
                 "typ": ai_data.get("type", "Faktura"),
@@ -377,7 +391,8 @@ class ForvaltareProcessor:
                 "telefon": ai_data.get("phone_number", "okänt"),
                 "beskrivning": ai_data.get("description", ""),
                 "unikt_id": check_id,
-                "tillagd": dt_util.now().isoformat()
+                "tillagd": dt_util.now().isoformat(),
+                "länk": file_link
             }
             fakturor_lista.append(entry)
             fakturor_lista.sort(key=lambda x: x.get("fakturadatum") or "9999-99-99")
@@ -468,7 +483,15 @@ class ForvaltareProcessor:
         return parent_id
 
     def _get_or_create_folder(self, service, folder_name, parent_id=None):
+        # 1. Check local cache
+        cache_key = (parent_id, folder_name)
+        if cache_key in self.folder_cache:
+            if self.enable_debug:
+                LOGGER.debug(f"Using cached folder ID for '{folder_name}' (parent: {parent_id}): {self.folder_cache[cache_key]}")
+            return self.folder_cache[cache_key]
+
         try:
+            # 2. Check Drive
             query = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and trashed=false"
             if parent_id:
                 query += f" and '{parent_id}' in parents"
@@ -477,8 +500,17 @@ class ForvaltareProcessor:
             files = results.get('files', [])
 
             if files:
-                return files[0]['id']
+                folder_id = files[0]['id']
+                self.folder_cache[cache_key] = folder_id
+                return folder_id
             else:
+                # 3. Create Folder (with brief pause)
+                if self.enable_debug:
+                    LOGGER.debug(f"Creating folder '{folder_name}'...")
+
+                # Small pause to help consistency/propagation
+                time.sleep(2)
+
                 file_metadata = {
                     'name': folder_name,
                     'mimeType': 'application/vnd.google-apps.folder'
@@ -486,21 +518,28 @@ class ForvaltareProcessor:
                 if parent_id:
                     file_metadata['parents'] = [parent_id]
                 folder = service.files().create(body=file_metadata, fields='id').execute()
-                return folder.get('id')
+                folder_id = folder.get('id')
+
+                if folder_id:
+                    self.folder_cache[cache_key] = folder_id
+                    if self.enable_debug:
+                        LOGGER.info(f"Created folder '{folder_name}' with ID: {folder_id}")
+
+                return folder_id
         except Exception as e:
             LOGGER.error(f"Fel vid mapphantering ({folder_name}): {e}")
             return None
 
-    def _create_notification(self, ai_data, sender_email, uploaded_files):
+    def _create_notification(self, ai_data, sender_email, uploaded_files_info):
         summary = ai_data.get("summary", "Okänd faktura")
         amount = ai_data.get("total_amount", "? kr")
         sender_name = ai_data.get("sender_name", sender_email)
 
         message = f"Faktura från {sender_name} hanterad.\nInfo: {summary}\nSumma: {amount}"
 
-        if uploaded_files:
-            message += f"\n\nLaddade upp {len(uploaded_files)} filer till Google Drive."
-        elif uploaded_files is not None and len(uploaded_files) == 0:
+        if uploaded_files_info:
+            message += f"\n\nLaddade upp {len(uploaded_files_info)} filer till Google Drive."
+        elif uploaded_files_info is not None and len(uploaded_files_info) == 0:
              message += "\n\nInga nya filer laddades upp (dubbletter eller fel)."
 
         self.hass.add_job(
@@ -516,8 +555,9 @@ class ForvaltareProcessor:
 
     def _get_swedish_month(self, month_number):
         months = [
-            "Januari", "Februari", "Mars", "April", "Maj", "Juni",
-            "Juli", "Augusti", "September", "Oktober", "November", "December"
+            "01. Januari", "02. Februari", "03. Mars", "04. April",
+            "05. Maj", "06. Juni", "07. Juli", "08. Augusti",
+            "09. September", "10. Oktober", "11. November", "12. December"
         ]
         return months[month_number - 1]
 

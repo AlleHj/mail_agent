@@ -1,14 +1,17 @@
-# Version: 0.18.0 - 2025-12-18
+# Fil: custom_components/mail_agent/__init__.py | Version: 0.24.0
 """Mail Agent - Huvudlogik med Global Låsning, Sensorstöd och Restore."""
 
-import imaplib
-import email
-from email.header import decode_header
+import base64
+import time
 from pathlib import Path
 from datetime import timedelta
 
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.util import dt as dt_util
@@ -20,32 +23,41 @@ from .forvaltare_processor import ForvaltareProcessor
 from .const import (
     DOMAIN,
     LOGGER,
-    CONF_IMAP_SERVER,
-    CONF_IMAP_PORT,
-    CONF_USERNAME,
-    CONF_PASSWORD,
-    CONF_FOLDER,
     CONF_SCAN_INTERVAL,
     CONF_ENABLE_DEBUG,
     CONF_INTERPRETATION_TYPE,
+    CONF_TARGET_EMAIL,
     TYPE_KALLELSE,
     TYPE_FORVALTARE,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_ENABLE_DEBUG,
     SIGNAL_MAIL_AGENT_UPDATE,
+    LABEL_AI_HANDLED,
 )
 
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR]
+PROCESS_DELAY = 3  # Sekunder att vänta mellan varje mail
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Setup."""
     config = entry.data
     options = entry.options
 
+    implementation = await config_entry_oauth2_flow.async_get_config_entry_implementation(
+        hass, entry
+    )
+    session = config_entry_oauth2_flow.OAuth2Session(hass, entry, implementation)
+
+    try:
+        await session.async_ensure_token_valid()
+    except Exception as e:
+        LOGGER.warning("Kunde inte validera token vid start: %s", e)
+
     scanner = MailAgentScanner(
         hass,
         {**config, **options},
-        entry.entry_id
+        entry.entry_id,
+        session
     )
 
     remove_listener = async_track_time_interval(
@@ -78,20 +90,16 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry):
 
 
 class MailAgentScanner:
-    def __init__(self, hass, config, entry_id):
+    def __init__(self, hass, config, entry_id, session):
         self.hass = hass
         self.config = config
         self.entry_id = entry_id
-
-        self.server = config.get(CONF_IMAP_SERVER)
-        self.port = config.get(CONF_IMAP_PORT)
-        self.user = config.get(CONF_USERNAME)
-        self.password = config.get(CONF_PASSWORD)
-        self.folder = config.get(CONF_FOLDER)
+        self.session = session
 
         self.scan_interval = config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
         self.enable_debug = config.get(CONF_ENABLE_DEBUG, DEFAULT_ENABLE_DEBUG)
         self.interpretation_type = config.get(CONF_INTERPRETATION_TYPE, TYPE_KALLELSE)
+        self.target_email = config.get(CONF_TARGET_EMAIL)
 
         self.processor = None
         if self.interpretation_type == TYPE_KALLELSE:
@@ -114,6 +122,11 @@ class MailAgentScanner:
         self._emails_processed_count = 0
         self._last_event_summary = "Ingen händelse än"
 
+        # Services (Initieras vid scan)
+        self.gmail_service = None
+        self.drive_service = None
+        self.label_id_handled = None
+
     @property
     def is_scanning(self):
         return self._is_scanning
@@ -134,21 +147,18 @@ class MailAgentScanner:
     def last_event_summary(self):
         return self._last_event_summary
 
-    # --- RESTORE METODER (NYTT I v0.19.0) ---
+    # --- RESTORE METODER ---
     def restore_email_count(self, count):
-        """Återställ räknaren från sensorns minne."""
         self._emails_processed_count = count
         if self.enable_debug:
             LOGGER.debug("Återställde email count till: %s", count)
 
     def restore_last_event(self, summary):
-        """Återställ senaste händelse från sensorns minne."""
         self._last_event_summary = summary
 
     def restore_last_scan(self, last_scan_dt):
-        """Återställ tid för senaste sökning."""
         self._last_scan_success = last_scan_dt
-    # ----------------------------------------
+    # -----------------------
 
     async def check_mail(self, now=None):
         """Asynkron startpunkt som anropas av timer."""
@@ -158,101 +168,176 @@ class MailAgentScanner:
             return
 
         self._is_scanning = True
-        self._notify_update()  # Uppdatera binary_sensor.scanning till On
+        self._notify_update()
 
         try:
+            # Refresh token and build services
+            await self.session.async_ensure_token_valid()
+            creds = Credentials(token=self.session.token["access_token"])
+
+            # Vi bygger services i executor för att undvika blockering vid discovery (om cache saknas)
+            def _build_services():
+                self.gmail_service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+                self.drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
+                # Ensure label exists
+                self._ensure_label_exists()
+
+            await self.hass.async_add_executor_job(_build_services)
+
             await self.hass.async_add_executor_job(self._check_mail_sync)
+
+        except Exception as e:
+            LOGGER.error("Fel vid förberedelse av scan: %s", e)
+            if self._is_connected:
+                self._is_connected = False
+                self._notify_update()
         finally:
             self._is_scanning = False
-            self._notify_update()  # Uppdatera binary_sensor.scanning till Off
+            self._notify_update()
 
     @callback
     def _notify_update(self):
         """Skicka signal till sensorerna att data har ändrats."""
         async_dispatcher_send(self.hass, f"{SIGNAL_MAIL_AGENT_UPDATE}_{self.entry_id}")
 
-    def _check_mail_sync(self):
-        """Synkron logik i executor-tråden."""
-        mail_con = None
-        try:
-            mail_con = imaplib.IMAP4_SSL(self.server, self.port)
-            mail_con.login(self.user, self.password)
-            mail_con.select(self.folder)
+    def _ensure_label_exists(self):
+        """Kontrollera om etiketten finns, annars skapa den."""
+        if self.label_id_handled:
+            return
 
-            # Anslutning lyckades
+        try:
+            results = self.gmail_service.users().labels().list(userId='me').execute()
+            labels = results.get('labels', [])
+
+            for label in labels:
+                if label['name'].upper() == LABEL_AI_HANDLED.upper():
+                    self.label_id_handled = label['id']
+                    if self.enable_debug:
+                        LOGGER.debug(f"Hittade etikett {LABEL_AI_HANDLED} med ID: {self.label_id_handled}")
+                    return
+
+            # Skapa om den inte finns
+            label_object = {
+                'name': LABEL_AI_HANDLED,
+                'labelListVisibility': 'labelShow',
+                'messageListVisibility': 'show'
+            }
+            created_label = self.gmail_service.users().labels().create(userId='me', body=label_object).execute()
+            self.label_id_handled = created_label['id']
+            LOGGER.info(f"Skapade ny etikett {LABEL_AI_HANDLED} med ID: {self.label_id_handled}")
+
+        except Exception as e:
+            LOGGER.error(f"Kunde inte hantera etiketten {LABEL_AI_HANDLED}: {e}")
+
+    def _tag_message_as_handled(self, msg_id):
+        """Lägg till etiketten AI-HANTERAD på ett meddelande."""
+        if not self.label_id_handled:
+            LOGGER.warning("Kan inte tagga meddelande, label ID saknas.")
+            return
+
+        try:
+            body = {'addLabelIds': [self.label_id_handled]}
+            self.gmail_service.users().messages().modify(userId='me', id=msg_id, body=body).execute()
+            if self.enable_debug:
+                LOGGER.debug(f"Taggade meddelande {msg_id} som {LABEL_AI_HANDLED}")
+        except Exception as e:
+            LOGGER.error(f"Fel vid taggning av meddelande {msg_id}: {e}")
+
+    def _check_mail_sync(self):
+        """Synkron logik för att hämta mail via Gmail API."""
+        if not self.gmail_service:
+            LOGGER.error("Gmail-tjänst ej initierad.")
+            return
+
+        try:
+            # Construct query: to:"{target_email}" -label:{LABEL_AI_HANDLED}
+            query = f'to:"{self.target_email}" -label:{LABEL_AI_HANDLED}'
+
+            if self.enable_debug:
+                LOGGER.info(f"Söker med query: {query}")
+
+            results = self.gmail_service.users().messages().list(userId='me', q=query).execute()
+            messages = results.get('messages', [])
+
             if not self._is_connected:
                 self._is_connected = True
                 self.hass.add_job(self._notify_update)
 
-            status, messages = mail_con.search(None, "UNSEEN")
-            if status != "OK" or not messages[0]:
+            if not messages:
                 self._last_scan_success = dt_util.now()
                 self.hass.add_job(self._notify_update)
                 return
 
-            mail_ids = messages[0].split()
-
+            total_messages = len(messages)
             if self.enable_debug:
-                LOGGER.info("Hittade %s nya mail.", len(mail_ids))
+                LOGGER.info("Hittade %s nya mail som matchar filter.", total_messages)
 
-            for mail_id in mail_ids:
+            for idx, msg_meta in enumerate(messages):
+                msg_id = msg_meta['id']
+
+                if self.enable_debug:
+                    LOGGER.info(f"Bearbetar mail {idx + 1}/{total_messages}...")
+
                 try:
-                    res, msg_data = mail_con.fetch(mail_id, "(RFC822)")
+                    # Hämta hela mailet
+                    msg_data = self.gmail_service.users().messages().get(userId='me', id=msg_id, format='full').execute()
 
-                    if not msg_data:
-                        LOGGER.warning("Ingen data hämtades för mail ID %s", mail_id)
-                        continue
+                    self._process_single_gmail(msg_data)
 
-                    for response_part in msg_data:
-                        if isinstance(response_part, tuple):
-                            try:
-                                # type: ignore undertrycker VS Code/Pylance-felet
-                                msg = email.message_from_bytes(response_part[1]) # type: ignore
-                                self._process_single_mail(msg)
-                            except Exception as e:
-                                LOGGER.error("Kunde inte parsa mail-innehåll (tuple): %s", e)
-
-                        elif isinstance(response_part, (bytes, str)):
-                            if self.enable_debug:
-                                LOGGER.debug("Ignorerar IMAP-del av typ %s: %s", type(response_part), response_part)
-
-                        else:
-                            LOGGER.warning("Oväntad datatyp i IMAP-svar: %s. Hoppar över.", type(response_part))
+                    # Tagga som hanterad oavsett utfall för att undvika loop
+                    self._tag_message_as_handled(msg_id)
 
                 except Exception as e:
-                    LOGGER.error("Fel vid bearbetning av mail ID %s: %s", mail_id, e)
+                    LOGGER.error("Fel vid bearbetning av mail ID %s: %s", msg_id, e)
 
-            # Uppdatera timestamp för lyckad scan
+                # Throttle
+                if self.enable_debug:
+                    LOGGER.info(f"Väntar {PROCESS_DELAY} sekunder...")
+                time.sleep(PROCESS_DELAY)
+
             self._last_scan_success = dt_util.now()
 
         except Exception as e:
-            LOGGER.error("Fel vid anslutning/sökning: %s", e)
+            LOGGER.error("Fel vid sökning mot Gmail API: %s", e)
             if self._is_connected:
                 self._is_connected = False
                 self.hass.add_job(self._notify_update)
         finally:
-            if mail_con:
-                try:
-                    mail_con.close()
-                    mail_con.logout()
-                except Exception:
-                    pass
-            # Alltid skicka en sista uppdatering
-            self.hass.add_job(self._notify_update)
+             self.hass.add_job(self._notify_update)
 
-    def _process_single_mail(self, msg):
-        subject = self._decode_subject(msg["Subject"])
-        sender = msg.get("From")
-        body = self._get_mail_body(msg)
-        attachment_paths = self._save_attachments(msg)
+    def _process_single_gmail(self, msg_resource):
+        """Bearbeta ett Gmail-meddelande-objekt."""
+        payload = msg_resource.get('payload', {})
+        headers = payload.get('headers', [])
+
+        subject = "Okänt ämne"
+        sender = "Okänd avsändare"
+
+        for h in headers:
+            name = h.get('name', '').lower()
+            if name == 'subject':
+                subject = h.get('value')
+            elif name == 'from':
+                sender = h.get('value')
 
         if self.enable_debug:
-            LOGGER.info(f"Hämtat mail från {sender}. Processar...")
+            LOGGER.info(f"Hämtat mail från {sender} (Subject: {subject}). Processar...")
+
+        body = self._get_gmail_body(payload)
+        attachment_paths = self._save_gmail_attachments(msg_resource['id'], payload)
 
         self._emails_processed_count += 1
 
         if self.processor:
-            result = self.processor.process_email(sender, subject, body, attachment_paths)
+            # Skicka med relevanta tjänster
+            service_arg = None
+            if self.interpretation_type == TYPE_KALLELSE:
+                service_arg = self.gmail_service
+            elif self.interpretation_type == TYPE_FORVALTARE:
+                service_arg = self.drive_service
+
+            result = self.processor.process_email(sender, subject, body, attachment_paths, service=service_arg)
+
             if result and result.get("summary"):
                 self._last_event_summary = result.get("summary")
             elif result:
@@ -260,44 +345,67 @@ class MailAgentScanner:
 
         self.hass.add_job(self._notify_update)
 
-    def _save_attachments(self, msg):
-        saved_paths = []
-        if msg.is_multipart():
-            for part in msg.walk():
-                if part.get_content_maintype() == 'multipart':
-                    continue
-                filename = part.get_filename()
-                if not filename:
-                    continue
-                if "pdf" in part.get_content_type():
-                    filename = "".join(c for c in filename if c.isalnum() or c in "._- ")
-                    filepath = self.storage_dir / filename
-                    with open(filepath, "wb") as f:
-                        f.write(part.get_payload(decode=True))
-                    saved_paths.append(filepath)
-        return saved_paths
-
-    def _get_mail_body(self, msg):
+    def _get_gmail_body(self, payload):
+        """Rekursivt hämta body text."""
         body = ""
-        if msg.is_multipart():
-            for part in msg.walk():
-                if part.get_content_type() == "text/plain":
-                    try:
-                        body = part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", errors="replace")
-                        break
-                    except Exception:
-                        pass
+        if 'parts' in payload:
+            for part in payload['parts']:
+                mime_type = part.get('mimeType')
+                if mime_type == 'text/plain':
+                    data = part.get('body', {}).get('data')
+                    if data:
+                        padded_data = data + '=' * (-len(data) % 4)
+                        body += base64.urlsafe_b64decode(padded_data).decode('utf-8', errors='replace')
+                elif mime_type == 'multipart/alternative':
+                    body += self._get_gmail_body(part)
         else:
-            try:
-                body = msg.get_payload(decode=True).decode(msg.get_content_charset() or "utf-8", errors="replace")
-            except Exception:
-                pass
+            # Om ingen multipart, kolla direkt i body
+            data = payload.get('body', {}).get('data')
+            if data:
+                 padded_data = data + '=' * (-len(data) % 4)
+                 body += base64.urlsafe_b64decode(padded_data).decode('utf-8', errors='replace')
+
         return body.strip()
 
-    def _decode_subject(self, encoded_subject):
-        if not encoded_subject:
-            return "Okänt ämne"
-        subject, encoding = decode_header(encoded_subject)[0]
-        if isinstance(subject, bytes):
-            return subject.decode(encoding if encoding else "utf-8")
-        return subject
+    def _save_gmail_attachments(self, msg_id, payload):
+        """Spara bilagor från Gmail."""
+        saved_paths = []
+
+        def _walk_parts(parts):
+            for part in parts:
+                if 'parts' in part:
+                    _walk_parts(part['parts'])
+
+                filename = part.get('filename')
+                body = part.get('body', {})
+                attachment_id = body.get('attachmentId')
+
+                if filename and attachment_id:
+                    # Filter: Vi är mest intresserade av PDFer eller dokument
+                    # Men vi tar allt som ser ut som en fil för processorn att avgöra
+                    # Användaren kanske bara vill ha PDF för fakturor/kallelser.
+                    # Vi behåller logiken "pdf" in checken?
+                    mime_type = part.get('mimeType', '')
+                    if "pdf" in mime_type.lower():
+                        # Hämta attachment data
+                        att = self.gmail_service.users().messages().attachments().get(
+                            userId='me', messageId=msg_id, id=attachment_id
+                        ).execute()
+                        data = att.get('data')
+                        if data:
+                            padded_data = data + '=' * (-len(data) % 4)
+                            file_data = base64.urlsafe_b64decode(padded_data)
+
+                            safe_filename = "".join(c for c in filename if c.isalnum() or c in "._- ")
+                            filepath = self.storage_dir / safe_filename
+                            with open(filepath, "wb") as f:
+                                f.write(file_data)
+                            saved_paths.append(filepath)
+
+        if 'parts' in payload:
+            _walk_parts(payload['parts'])
+        else:
+            # Hantera fall där det finns bilagor men ingen multipart (ovanligt för bilagor men möjligt)
+             _walk_parts([payload])
+
+        return saved_paths
