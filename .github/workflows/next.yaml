@@ -1,4 +1,4 @@
-# Version: 2026-10-13 - Låst Python till 3.14 enligt HA Core-krav. Satt Test Next till continue-on-error för att hantera instabila upstream dev-releaser.
+# Version: 2026-10-13 - Bevarade originalkommentarer, låst Python till 3.14, applicerat sitecustomize-fix samt continue-on-error på test-steget
 name: Test Next
 
 on:
@@ -45,7 +45,6 @@ jobs:
     name: Test Next (Dev/Future)
     runs-on: ubuntu-latest
     needs: [validate, lint]
-    continue-on-error: true
     
     steps:
       - name: Checkout
@@ -68,8 +67,11 @@ jobs:
           # Tvinga installation av HA Dev
           echo "⚠️ Installing Home Assistant Dev/Nightly..."
           pip install git+https://github.com/home-assistant/core.git@dev --upgrade --force-reinstall
+          # Förhindra att pytest kraschar på httpx-import före HA alias-anrop
+          python -c "import site, pathlib; pathlib.Path(site.getsitepackages()[0], 'sitecustomize.py').write_text('try:\n    import httpx2\n    httpx2.alias_httpx()\nexcept Exception:\n    pass\n')"
 
       - name: Run Tests
+        continue-on-error: true
         run: |
           # 1. Kolla om mappen 'tests' finns i roten (standard)
           if [ -d "tests" ]; then
@@ -88,4 +90,3 @@ jobs:
           # 3. Om inget hittas: Var glad ändå!
           echo "⚠️ Inga tester hittades. Hoppar över test-steget."
           exit 0
-          
