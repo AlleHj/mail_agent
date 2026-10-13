@@ -1,4 +1,4 @@
-# Version: 2026-10-13 - Låst Python-version i test-next till 3.13 för att undvika Python 3.15-kompilering och snabba upp CI.
+# Version: 2026-10-13 - Låst Python-version till 3.14 och korrigerat continue-on-error placering under test-next jobbet.
 name: CI (Test Current & Next)
 
 on:
@@ -58,7 +58,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
       - name: Install Ruff
         run: pip install ruff
       # --output-format=github gör att varningar syns snyggt i "Files Changed" fliken på en PR
@@ -72,7 +72,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.13", "3.14"]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -101,15 +101,15 @@ jobs:
   test-next:
     name: Test Next (Dev/Future)
     runs-on: ubuntu-latest
-    needs: [validate, lint]
     continue-on-error: true
+    needs: [validate, lint]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
       - name: Install dependencies (Dev/Nightly)
         run: |
           sudo apt-get update
