@@ -1,4 +1,4 @@
-# Version: 2026-10-13 - Bevarade originalkommentarer, låst Python till 3.14, applicerat sitecustomize-fix samt continue-on-error på test-steget
+# Version: 2026-10-13 - Återställt Python 3.12 i test-current matrisen för att uppfylla GitHub Branch Protection Ruleset
 name: CI (Test Current & Next)
 
 on:
@@ -73,7 +73,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.13", "3.14"]
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
